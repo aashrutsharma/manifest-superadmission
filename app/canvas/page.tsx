@@ -198,7 +198,7 @@ export default function CanvasGraphPage() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let localNodes = [...nodes];
+    const localNodes = [...nodes];
     const nodeMap = new Map(localNodes.map((n) => [n.id, n]));
 
     const render = () => {
