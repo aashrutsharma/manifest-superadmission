@@ -151,7 +151,7 @@ export default function DatabaseSpreadsheetModal({
               <Input
                 value={searchTerm}
                 onChange={(e) => handleSearchChange(e.target.value)}
-                placeholder="Search any of 70,623 colleges by name, AISHE code (e.g. U-0456), city, or state..."
+                placeholder="Search 70,623 colleges by name, city, or state..."
                 className="pl-9 pr-8 h-10 text-xs bg-white border-slate-200 rounded-xl font-medium focus-visible:ring-2 focus-visible:ring-[#0b53c3]"
               />
               {searchTerm && (
@@ -214,7 +214,7 @@ export default function DatabaseSpreadsheetModal({
                   <td colSpan={7} className="py-16 text-center text-slate-400 text-xs">
                     <div className="max-w-md mx-auto space-y-1">
                       <p className="font-semibold text-slate-700">No institutions found matching &quot;{searchTerm}&quot;</p>
-                      <p className="text-[11px] text-slate-400">Try searching for state names, city names, or AISHE codes.</p>
+                      <p className="text-[11px] text-slate-400">Try searching by institution name, city, or state.</p>
                     </div>
                   </td>
                 </tr>
@@ -242,7 +242,9 @@ export default function DatabaseSpreadsheetModal({
                               {college.name}
                             </div>
                             <div className="text-[11px] text-slate-400 font-mono flex items-center gap-2 mt-0.5">
-                              {college.shortName && <span>{college.shortName}</span>}
+                              {college.shortName && college.shortName !== college.name && !/^([UC]|\bAISHE\b)[-_ ]?\d+/i.test(college.shortName) && (
+                                <span className="text-slate-600 font-semibold">{college.shortName}</span>
+                              )}
                               {college.establishedYear && (
                                 <span>Est. {college.establishedYear}</span>
                               )}

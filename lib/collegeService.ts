@@ -2,6 +2,7 @@ import { supabase, isSupabaseConfigured } from './supabase';
 import { College, Course, FilterState } from './types';
 import { COLLEGES_DATA } from './data/colleges';
 import { getCollegeCoordinates } from './geo';
+import { expandSearchQuery, fuzzyMatchInstitution } from './acronyms';
 
 function inferStreamsFromNameAndData(row: Record<string, any>): string[] {
   const streams = new Set<string>();
@@ -186,9 +187,86 @@ function generateCoursesForInstitution(row: Record<string, any>, streams: string
   return courses;
 }
 
+/**
+ * Intelligently derives a clean, recognizable human-readable short name for an institution.
+ * NEVER returns an AISHE code (e.g. C-12345, U-0456), numeric IDs, or placeholder strings.
+ */
+export function deriveCollegeShortName(name: string, rawShortName?: string, aisheCode?: string): string {
+  // If rawShortName is already provided in DB, check that it's NOT an AISHE code or raw ID
+  if (rawShortName && typeof rawShortName === 'string') {
+    const trimmed = rawShortName.trim();
+    const isAishe = /^([UC]|\bAISHE\b)[-_ ]?\d+/i.test(trimmed);
+    const isCodeMatch = aisheCode && trimmed.toLowerCase() === aisheCode.trim().toLowerCase();
+    const isNumeric = /^\d+$/.test(trimmed);
+    if (trimmed.length > 0 && !isAishe && !isCodeMatch && !isNumeric) {
+      return trimmed;
+    }
+  }
+
+  if (!name || !name.trim()) return 'Higher Education Institution';
+
+  let clean = name.trim();
+
+  // Strip extraneous AISHE or ID markers e.g. "(Id: C-12345)", "[C-1234]", "(AISHE: U-0123)"
+  clean = clean.replace(/\s*[\(\[]\s*(?:id|aishe|code)?\s*[:\-_]?\s*[a-z0-9\-]+\s*[\)\]]/gi, '');
+  // Strip "(Autonomous)", "(Shift-1)", "(Night College)", etc.
+  clean = clean.replace(/\s*[\(\[]\s*(?:autonomous|shift[-\s]?\d|evening|morning|night)\s*[\)\]]/gi, '');
+  // Strip trailing "(India)"
+  clean = clean.replace(/\s*[\(\[]\s*india\s*[\)\]]/gi, '');
+
+  // High-profile institution acronym mapping for crisp, punchy pill labels
+  clean = clean.replace(/^Indian Institute of Technology\b/i, 'IIT');
+  clean = clean.replace(/^National Institute of Technology\b/i, 'NIT');
+  clean = clean.replace(/^Indian Institute of Information Technology\b/i, 'IIIT');
+  clean = clean.replace(/^Indian Institute of Management\b/i, 'IIM');
+  clean = clean.replace(/^Indian Institute of Science\b/i, 'IISc');
+  clean = clean.replace(/^All India Institute of Medical Sciences\b/i, 'AIIMS');
+  clean = clean.replace(/^Birla Institute of Technology and Science\b/i, 'BITS');
+  clean = clean.replace(/^Birla Institute of Technology\b/i, 'BIT');
+  clean = clean.replace(/^Vellore Institute of Technology\b/i, 'VIT');
+  clean = clean.replace(/^National Law School of India University\b/i, 'NLSIU');
+  clean = clean.replace(/^National Law University\b/i, 'NLU');
+  clean = clean.replace(/^Government College of Engineering\b/i, 'GCE');
+  clean = clean.replace(/^Government Engineering College\b/i, 'GEC');
+  clean = clean.replace(/^Government Medical College\b/i, 'GMC');
+  clean = clean.replace(/^Government Degree College\b/i, 'GDC');
+  clean = clean.replace(/^Government First Grade College\b/i, 'GFGC');
+  clean = clean.replace(/^Government Arts College\b/i, 'GAC');
+  clean = clean.replace(/^Government Polytechnic\b/i, 'Govt Polytechnic');
+  clean = clean.replace(/^Government\b/i, 'Govt');
+
+  // Common phrase shorteners
+  clean = clean.replace(/Engineering and Technology\b/i, 'Engg & Tech');
+  clean = clean.replace(/Institute of Technology\b/i, 'Institute of Tech');
+  clean = clean.replace(/Institute of Management\b/i, 'Institute of Mgmt');
+
+  // If already concise (<= 32 chars), return clean
+  if (clean.length <= 32) {
+    return clean;
+  }
+
+  // If there's a comma (e.g. "Thapar Institute of Engg & Tech, Patiala" or "Govt College, Karnal")
+  const commaParts = clean.split(/[,;\-–]/).map((p) => p.trim()).filter(Boolean);
+  if (commaParts.length > 0 && commaParts[0].length >= 4 && commaParts[0].length <= 32) {
+    return commaParts[0];
+  }
+
+  // Word boundary truncation near 32 chars
+  if (clean.length > 32) {
+    const cut = clean.slice(0, 32);
+    const lastSpace = cut.lastIndexOf(' ');
+    if (lastSpace > 16) {
+      return cut.slice(0, lastSpace);
+    }
+    return cut;
+  }
+
+  return clean;
+}
+
 export function mapDatabaseRowToCollege(row: Record<string, any>): College {
   const name = row.name || row.college_name || row.institution_name || 'Unnamed Institution';
-  const shortName = row.short_name || row.aishe_code || name.slice(0, 32);
+  const shortName = deriveCollegeShortName(name, row.short_name, row.aishe_code);
   const slug = row.slug || `${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${row.id || Math.random().toString(36).substring(7)}`;
   const city = row.city || row.district || row.location || 'India';
   const state = row.state || row.state_name || 'India';
@@ -241,6 +319,7 @@ export function mapDatabaseRowToCollege(row: Record<string, any>): College {
     name: String(name),
     shortName: String(shortName),
     code: row.aishe_code || undefined,
+    aisheCode: row.aishe_code || undefined,
     universityType: String(universityType),
     ownership: String(ownership),
     establishedYear: Number(row.established_year || 1995),
@@ -302,14 +381,59 @@ export async function queryCollegesFromDatabase(filters: FilterState): Promise<F
       // Skip expensive exact count during text search to prevent Postgres statement timeouts
       let query = supabase.from(targetTable).select('*', hasSearch ? undefined : { count: 'exact' });
 
-      // Search with acronym & substring expansion
+      // Search strictly by institution name, short name, city, and state (NO AISHE codes)
       if (hasSearch) {
         const raw = filters.searchQuery.trim();
         const clean = raw.replace(/['"%,()]/g, '');
+
         if (clean.length > 0) {
-          query = query.or(
-            `name.ilike.%${clean}%,city.ilike.%${clean}%,state.ilike.%${clean}%,aishe_code.ilike.%${clean}%`
-          );
+          const expansions = expandSearchQuery(clean);
+
+          if (expansions.length > 1) {
+            // Known acronym or alias (e.g. "iitb", "bits", "coep", "vit", "thapar")
+            // Search expansions across name and city without querying aishe_code
+            const clauses: string[] = [];
+            for (const exp of expansions) {
+              const expClean = exp.replace(/['"%,()]/g, '').trim();
+              if (expClean.length > 0) {
+                clauses.push(`name.ilike.%${expClean}%`);
+              }
+            }
+            clauses.push(`name.ilike.%${clean}%`);
+            clauses.push(`city.ilike.%${clean}%`);
+            query = query.or(clauses.slice(0, 8).join(','));
+          } else {
+            // Tokenize multi-word query
+            const tokens = clean.split(/\s+/).filter((t) => t.length > 1);
+
+            if (tokens.length >= 2) {
+              const first = tokens[0];
+              const rest = tokens.slice(1).join(' ');
+
+              if (/^(iit|indian institute of technology)$/i.test(first)) {
+                query = query.or('name.ilike.%Indian Institute of Technology%,name.ilike.%IIT%');
+                query = query.or(`name.ilike.%${rest}%,city.ilike.%${rest}%`);
+              } else if (/^(nit|national institute of technology)$/i.test(first)) {
+                query = query.or('name.ilike.%National Institute of Technology%,name.ilike.%NIT%');
+                query = query.or(`name.ilike.%${rest}%,city.ilike.%${rest}%`);
+              } else if (/^(iim|indian institute of management)$/i.test(first)) {
+                query = query.or('name.ilike.%Indian Institute of Management%,name.ilike.%IIM%');
+                query = query.or(`name.ilike.%${rest}%,city.ilike.%${rest}%`);
+              } else if (/^(iiit)$/i.test(first)) {
+                query = query.or('name.ilike.%Indian Institute of Information Technology%,name.ilike.%International Institute of Information Technology%,name.ilike.%IIIT%');
+                query = query.or(`name.ilike.%${rest}%,city.ilike.%${rest}%`);
+              } else if (/^(aiims)$/i.test(first)) {
+                query = query.or('name.ilike.%All India Institute of Medical Sciences%,name.ilike.%AIIMS%');
+                query = query.or(`name.ilike.%${rest}%,city.ilike.%${rest}%`);
+              } else {
+                // Match full phrase or tokens across name, city, state
+                query = query.or(`name.ilike.%${clean}%,name.ilike.%${first}%,city.ilike.%${rest}%,city.ilike.%${first}%`);
+              }
+            } else {
+              // Single token: search name, city, state (never AISHE code)
+              query = query.or(`name.ilike.%${clean}%,city.ilike.%${clean}%,state.ilike.%${clean}%`);
+            }
+          }
         }
       }
 
@@ -408,17 +532,7 @@ export async function queryCollegesFromDatabase(filters: FilterState): Promise<F
   let localList = [...COLLEGES_DATA];
 
   if (filters.searchQuery.trim()) {
-    const q = filters.searchQuery.toLowerCase();
-    localList = localList.filter((col) => {
-      return (
-        col.name.toLowerCase().includes(q) ||
-        col.shortName.toLowerCase().includes(q) ||
-        col.city.toLowerCase().includes(q) ||
-        col.state.toLowerCase().includes(q) ||
-        col.universityType.toLowerCase().includes(q) ||
-        col.streams.some((s) => s.toLowerCase().includes(q))
-      );
-    });
+    localList = localList.filter((col) => fuzzyMatchInstitution(col, filters.searchQuery));
   }
 
   if (filters.selectedStates.length > 0) {

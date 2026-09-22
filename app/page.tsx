@@ -37,6 +37,8 @@ import {
 import { Input } from '@/components/ui/input';
 
 
+import { fuzzyMatchInstitution } from '@/lib/acronyms';
+
 // Dynamic import for Leaflet map to prevent SSR window error
 const IndiaGlobeMap = dynamic(() => import('@/components/IndiaGlobeMap'), {
   ssr: false,
@@ -49,6 +51,14 @@ const IndiaGlobeMap = dynamic(() => import('@/components/IndiaGlobeMap'), {
     </div>
   ),
 });
+
+export function getCollegeDisplayName(college: College): string {
+  const short = college.shortName?.trim();
+  if (short && !/^([UC]|\bAISHE\b)[-_ ]?\d+/i.test(short) && !/^\d+$/.test(short)) {
+    return short;
+  }
+  return college.name;
+}
 
 export default function ManifestDashboard() {
   // Live Database Dataset State
@@ -120,10 +130,7 @@ export default function ManifestDashboard() {
           const localEnriched = COLLEGES_DATA.filter(
             (c) =>
               !liveIds.has(c.id) &&
-              (!searchQuery.trim() ||
-                c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                (c.shortName && c.shortName.toLowerCase().includes(searchQuery.toLowerCase())) ||
-                c.city.toLowerCase().includes(searchQuery.toLowerCase()))
+              (!searchQuery.trim() || fuzzyMatchInstitution(c, searchQuery))
           );
 
           const combined = [...data.colleges, ...localEnriched];
@@ -407,7 +414,7 @@ export default function ManifestDashboard() {
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder={isSearchingLive ? 'Searching 70,623 live colleges...' : 'Search 70k+ colleges, cities, AISHE...'}
+              placeholder={isSearchingLive ? 'Searching 70,623 colleges by name, city...' : 'Search colleges by name or city...'}
               className="pl-9 pr-8 h-9 text-xs bg-slate-50/90 border-slate-200 rounded-xl font-semibold focus-visible:ring-[#0b53c3]"
             />
             {searchQuery && (
@@ -697,12 +704,14 @@ export default function ManifestDashboard() {
                 {filteredColleges.slice(0, 80).map((college) => {
                   const isSelected = selectedCollege?.id === college.id;
                   const isCompared = comparedColleges.some((c) => c.id === college.id);
+                  const displayName = getCollegeDisplayName(college);
                   return (
                     <button
                       key={college.id}
                       type="button"
                       onClick={() => setSelectedCollege(college)}
-                      className={`pl-1.5 pr-3 py-1 rounded-2xl text-xs font-semibold transition-all flex items-center gap-2 border shadow-2xs ${
+                      title={college.name}
+                      className={`pl-1.5 pr-3 py-1 rounded-2xl text-xs font-semibold transition-all flex items-center gap-2 border shadow-2xs group ${
                         isSelected
                           ? 'bg-[#0b53c3] text-white border-[#0b53c3] shadow-md scale-105'
                           : 'bg-white hover:bg-blue-50/50 text-slate-800 border-slate-200/80 hover:border-blue-300'
@@ -715,8 +724,8 @@ export default function ManifestDashboard() {
                         code={college.code}
                         size="xs"
                       />
-                      <span className="truncate max-w-[150px] font-bold">
-                        {college.shortName || college.name}
+                      <span className="truncate max-w-[180px] sm:max-w-[220px] font-bold">
+                        {displayName}
                       </span>
                       {college.nirfOverallRank && (
                         <span
@@ -752,9 +761,9 @@ export default function ManifestDashboard() {
                         size="xs"
                       />
                       <div className="text-left">
-                        <div className="font-bold text-slate-900 text-xs">{course.name}</div>
-                        <div className="text-[10px] text-slate-400">
-                          {college.shortName} &middot; ₹{(course.annualFee / 100000).toFixed(1)}L/yr
+                        <div className="font-bold text-slate-900 text-xs truncate max-w-[180px]">{course.name}</div>
+                        <div className="text-[10px] text-slate-400 truncate max-w-[180px]">
+                          {getCollegeDisplayName(college)} &middot; ₹{(course.annualFee / 100000).toFixed(1)}L/yr
                         </div>
                       </div>
                     </button>
@@ -799,7 +808,7 @@ export default function ManifestDashboard() {
                         size="xs"
                       />
                       <span className="font-bold text-slate-800 group-hover:text-[#0b53c3] transition-colors truncate">
-                        {college.shortName || college.name}
+                        {getCollegeDisplayName(college)}
                       </span>
                     </div>
                     <span className="font-black text-[#0b53c3] text-xs shrink-0 ml-2">

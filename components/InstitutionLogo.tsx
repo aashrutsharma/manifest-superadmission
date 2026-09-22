@@ -46,7 +46,12 @@ export default function InstitutionLogo({
       : 'text-base font-extrabold';
 
 
-  const initials = (shortName || code || name)
+  // Initials must always derive from institution name or human short name, NEVER from an AISHE registration code
+  const cleanSource = (shortName && !/^([UC]|\bAISHE\b)[-_ ]?\d+/i.test(shortName.trim()))
+    ? shortName
+    : name;
+
+  const initials = cleanSource
     .replace(/[^a-zA-Z0-9]/g, ' ')
     .split(/\s+/)
     .filter(Boolean)
