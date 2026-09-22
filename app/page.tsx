@@ -90,173 +90,73 @@ export default function ManifestDashboard() {
   const [askInput, setAskInput] = useState('');
   const [askStatus, setAskStatus] = useState<string | null>(null);
 
-  // Fetch initial batch from live database API (/api/colleges)
+  // Unified Live Supabase Query Engine
+  // Triggers live query across all 70,623 colleges whenever any filter or search changes
   useEffect(() => {
     let isMounted = true;
-    async function loadLiveColleges() {
-      try {
-        setIsFetchingLive(true);
-        const res = await fetch('/api/colleges?pageSize=150');
-        if (!res.ok) throw new Error('API failed');
-        const data = await res.json();
-        if (isMounted && data.colleges && data.colleges.length > 0) {
-          // Merge live database records with local enriched records (avoid duplicates)
-          const liveIds = new Set(data.colleges.map((c: College) => c.id));
-          const enrichedOnly = COLLEGES_DATA.filter((c) => !liveIds.has(c.id));
-          const combined = [...enrichedOnly, ...data.colleges];
-          setBaseColleges(combined);
-          setCollegesList(combined);
-          if (data.totalCount) setTotalDatabaseCount(data.totalCount);
-        }
-      } catch {
-        // Gracefully use local dataset
-      } finally {
-        if (isMounted) setIsFetchingLive(false);
-      }
-    }
-    loadLiveColleges();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
+    const hasSearch = Boolean(searchQuery.trim());
+    const delay = hasSearch ? 260 : 0;
 
-  // Live debounced search across all 70,623 institutions
-  useEffect(() => {
-    const trimmed = searchQuery.trim();
-    if (!trimmed) {
-      setCollegesList(baseColleges);
-      setIsSearchingLive(false);
-      return;
-    }
-
-    if (trimmed.length < 2) return;
-
-    let isSubscribed = true;
-    setIsSearchingLive(true);
+    if (hasSearch) setIsSearchingLive(true);
+    setIsFetchingLive(true);
 
     const timer = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/colleges?q=${encodeURIComponent(trimmed)}&pageSize=60`);
-        if (!res.ok) throw new Error('Search failed');
+        const params = new URLSearchParams();
+        if (searchQuery.trim()) params.set('q', searchQuery.trim());
+        if (selectedNirfTier !== 'All') params.set('nirf', selectedNirfTier);
+        if (selectedStream !== 'All') params.set('stream', selectedStream);
+        if (selectedType !== 'All') params.set('type', selectedType);
+        if (selectedNaac !== 'All') params.set('naac', selectedNaac);
+        if (selectedCtc !== 'All') params.set('ctc', selectedCtc);
+        params.set('pageSize', '100');
+
+        const res = await fetch(`/api/colleges?${params.toString()}`);
+        if (!res.ok) throw new Error('Query failed');
         const data = await res.json();
-        if (isSubscribed && data.colleges) {
-          const fetchedIds = new Set(data.colleges.map((c: College) => c.id));
-          const localMatches = COLLEGES_DATA.filter(
+
+        if (isMounted && data.colleges) {
+          const liveIds = new Set(data.colleges.map((c: College) => c.id));
+          const localEnriched = COLLEGES_DATA.filter(
             (c) =>
-              !fetchedIds.has(c.id) &&
-              (c.name.toLowerCase().includes(trimmed.toLowerCase()) ||
-                (c.shortName && c.shortName.toLowerCase().includes(trimmed.toLowerCase())) ||
-                c.city.toLowerCase().includes(trimmed.toLowerCase()))
+              !liveIds.has(c.id) &&
+              (!searchQuery.trim() ||
+                c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                (c.shortName && c.shortName.toLowerCase().includes(searchQuery.toLowerCase())) ||
+                c.city.toLowerCase().includes(searchQuery.toLowerCase()))
           );
-          setCollegesList([...data.colleges, ...localMatches]);
+
+          const combined = [...data.colleges, ...localEnriched];
+          setCollegesList(combined);
           if (typeof data.totalCount === 'number') {
             setTotalDatabaseCount(data.totalCount);
           }
         }
-      } catch {
-        // keep current list
+      } catch (err) {
+        console.warn('Live filter fetch error:', err);
       } finally {
-        if (isSubscribed) setIsSearchingLive(false);
+        if (isMounted) {
+          setIsFetchingLive(false);
+          setIsSearchingLive(false);
+        }
       }
-    }, 280);
+    }, delay);
 
     return () => {
-      isSubscribed = false;
+      isMounted = false;
       clearTimeout(timer);
     };
-  }, [searchQuery, baseColleges]);
-
-  // Filtered dataset
-  const filteredColleges = useMemo(() => {
-    return collegesList.filter((college) => {
-      // Search matching
-      if (searchQuery.trim()) {
-        const q = searchQuery.toLowerCase().trim();
-        const matchesName = college.name.toLowerCase().includes(q);
-        const matchesShort = (college.shortName || '').toLowerCase().includes(q);
-        const matchesCity = college.city.toLowerCase().includes(q);
-        const matchesState = college.state.toLowerCase().includes(q);
-        const matchesAishe = (college.aisheCode || '').toLowerCase().includes(q);
-        const matchesCode = (college.code || '').toLowerCase().includes(q);
-        if (!matchesName && !matchesShort && !matchesCity && !matchesState && !matchesAishe && !matchesCode) {
-          return false;
-        }
-      }
-
-      // NIRF Tier
-      if (selectedNirfTier !== 'All') {
-        const rank = college.nirfOverallRank;
-        if (selectedNirfTier === 'Top 10' && (!rank || rank > 10)) return false;
-        if (selectedNirfTier === 'Top 50' && (!rank || rank > 50)) return false;
-        if (selectedNirfTier === 'Top 100' && (!rank || rank > 100)) return false;
-        if (selectedNirfTier === '100-200' && (!rank || rank < 101 || rank > 200)) return false;
-      }
-
-      // Entrance Exam Filter
-      if (selectedExam !== 'All') {
-        const exams = college.examsAccepted || [];
-        const hasExam = exams.some((e) => e.toLowerCase().includes(selectedExam.toLowerCase()));
-        if (!hasExam) return false;
-      }
-
-      // Budget / Annual Fee Filter
-      if (selectedBudget !== 'All') {
-        const fee = college.avgAnnualFeeMin || 1.5;
-        if (selectedBudget === '< ₹1 Lakh' && fee >= 1.0) return false;
-        if (selectedBudget === '₹1L - ₹3L' && (fee < 1.0 || fee > 3.0)) return false;
-        if (selectedBudget === '₹3L - ₹6L' && (fee < 3.0 || fee > 6.0)) return false;
-        if (selectedBudget === '> ₹6L' && fee <= 6.0) return false;
-      }
-
-      // Placement CTC Filter
-      if (selectedCtc !== 'All') {
-        const ctc = college.medianPackageLpa || 5;
-        if (selectedCtc === '> ₹20 LPA' && ctc < 20) return false;
-        if (selectedCtc === '> ₹12 LPA' && ctc < 12) return false;
-        if (selectedCtc === '> ₹6 LPA' && ctc < 6) return false;
-      }
-
-      // Type matching
-      if (selectedType !== 'All') {
-        const type = (college.universityType || '').toLowerCase();
-        if (selectedType === 'Central / IIT / NIT' && !type.includes('iit') && !type.includes('nit') && !type.includes('central')) {
-          return false;
-        }
-        if (selectedType === 'State Public' && !type.includes('state') && !type.includes('public')) {
-          return false;
-        }
-        if (selectedType === 'Private Deemed' && !type.includes('private') && !type.includes('deemed')) {
-          return false;
-        }
-      }
-
-      // NAAC matching
-      if (selectedNaac !== 'All') {
-        if (!college.naacGrade || !college.naacGrade.includes(selectedNaac)) {
-          return false;
-        }
-      }
-
-      // Stream matching
-      if (selectedStream !== 'All') {
-        if (!college.streams || !college.streams.some((s) => s.toLowerCase().includes(selectedStream.toLowerCase()))) {
-          return false;
-        }
-      }
-
-      return true;
-    });
   }, [
-    collegesList,
     searchQuery,
     selectedNirfTier,
-    selectedExam,
-    selectedBudget,
-    selectedCtc,
+    selectedStream,
     selectedType,
     selectedNaac,
-    selectedStream,
+    selectedCtc,
   ]);
+
+  // Active colleges mapped directly to Map and Bottom Dock
+  const filteredColleges = collegesList;
 
   // Leading institutions list for right widget
   const leadingInstitutions = useMemo(() => {
@@ -715,8 +615,9 @@ export default function ManifestDashboard() {
         {/* Footer info & reset */}
         <div className="p-4 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between text-xs">
           <div className="text-xs text-slate-600 font-semibold">
-            <span className="font-extrabold text-slate-900">{filteredColleges.length}</span> visible
-            {isFetchingLive && <span className="ml-1 text-[#0b53c3] font-bold animate-pulse">&middot; live</span>}
+            <span className="font-extrabold text-slate-900">{totalDatabaseCount.toLocaleString()}</span>
+            <span className="text-slate-500 font-medium"> in selection</span>
+            {isFetchingLive && <span className="ml-1 text-[#0b53c3] font-bold animate-pulse">&middot; querying...</span>}
           </div>
           <button
             type="button"
@@ -734,11 +635,16 @@ export default function ManifestDashboard() {
         {/* Dock Header */}
         <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-lg bg-[#0b53c3] flex items-center justify-center text-white text-xs font-black shadow-xs">
-              M
+            <div className="w-6 h-6 rounded-lg bg-slate-900 flex items-center justify-center p-1 shadow-xs border border-slate-800 shrink-0">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img src="/favicon-dark.png" alt="Console" className="w-3.5 h-3.5 object-contain" />
             </div>
-            <div className="text-xs font-bold text-slate-900 tracking-tight">
-              Current view <span className="font-mono text-[#0b53c3] font-extrabold">{filteredColleges.length}</span>
+            <div className="text-xs font-bold text-slate-900 tracking-tight flex items-center gap-1.5 truncate">
+              <span>Current view</span>
+              <span className="font-mono text-[#0b53c3] font-extrabold">{filteredColleges.length}</span>
+              <span className="text-slate-400 font-medium text-[11px] hidden sm:inline truncate">
+                &middot; {totalDatabaseCount.toLocaleString()} in selection
+              </span>
             </div>
 
             {/* Mode Toggle: Institutions vs Top Programs */}
@@ -788,7 +694,7 @@ export default function ManifestDashboard() {
           <div className="p-3 sm:p-3.5 max-h-[125px] sm:max-h-[155px] overflow-y-auto">
             {dockViewMode === 'colleges' ? (
               <div className="flex flex-wrap gap-2">
-                {filteredColleges.slice(0, 28).map((college) => {
+                {filteredColleges.slice(0, 80).map((college) => {
                   const isSelected = selectedCollege?.id === college.id;
                   const isCompared = comparedColleges.some((c) => c.id === college.id);
                   return (

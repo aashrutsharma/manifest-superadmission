@@ -11,6 +11,20 @@ export async function GET(request: NextRequest) {
   const types = searchParams.getAll('type');
   const ownership = searchParams.getAll('ownership');
   const naac = searchParams.getAll('naac');
+  const nirfTier = searchParams.get('nirf') || '';
+  let minNirfRank: number | undefined;
+  let maxNirfRank: number | undefined;
+  if (nirfTier === 'Top 10') maxNirfRank = 10;
+  else if (nirfTier === 'Top 50') maxNirfRank = 50;
+  else if (nirfTier === 'Top 100') maxNirfRank = 100;
+  else if (nirfTier === '100-200') { minNirfRank = 101; maxNirfRank = 200; }
+
+  const ctcParam = searchParams.get('ctc') || '';
+  let minPackageLpa: number | undefined;
+  if (ctcParam.includes('20')) minPackageLpa = 20;
+  else if (ctcParam.includes('12')) minPackageLpa = 12;
+  else if (ctcParam.includes('6')) minPackageLpa = 6;
+
   const sortBy = (searchParams.get('sort') || 'nirf') as FilterState['sortBy'];
   const page = parseInt(searchParams.get('page') || '1', 10);
   const pageSize = parseInt(searchParams.get('pageSize') || '24', 10);
@@ -22,6 +36,9 @@ export async function GET(request: NextRequest) {
     selectedTypes: types,
     selectedOwnership: ownership,
     selectedNaac: naac,
+    minNirfRank,
+    maxNirfRank,
+    minPackageLpa,
     sortBy,
     page,
     pageSize,

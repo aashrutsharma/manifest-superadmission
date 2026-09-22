@@ -1,6 +1,7 @@
 import { supabase, isSupabaseConfigured } from './supabase';
 import { College, Course, FilterState } from './types';
 import { COLLEGES_DATA } from './data/colleges';
+import { getCollegeCoordinates } from './geo';
 
 function inferStreamsFromNameAndData(row: Record<string, any>): string[] {
   const streams = new Set<string>();
@@ -226,6 +227,14 @@ export function mapDatabaseRowToCollege(row: Record<string, any>): College {
 
   const defaultDesc = `${name} is a higher education institution located in ${city}, ${state}. ${row.parent_university ? 'Affiliated with ' + row.parent_university + '. ' : ''}Offering programs across ${streams.join(', ')}.`;
 
+  const rawLat = row.latitude ? Number(row.latitude) : null;
+  const rawLng = row.longitude ? Number(row.longitude) : null;
+  const hasValidRawCoords = rawLat !== null && rawLng !== null && !isNaN(rawLat) && !isNaN(rawLng) && rawLat !== 0;
+
+  const [lat, lng] = hasValidRawCoords
+    ? [rawLat, rawLng]
+    : getCollegeCoordinates({ city, state, name, id: String(row.id || '') } as any);
+
   return {
     id: String(row.id || row.aishe_code || slug),
     slug: String(slug),
@@ -242,6 +251,8 @@ export function mapDatabaseRowToCollege(row: Record<string, any>): College {
     pincode: row.pincode || undefined,
     address: row.address || `${city}, ${state}`,
     campusAreaAcres: Number(row.campus_size_acres || 25),
+    lat,
+    lng,
     naacGrade: String(naacGrade),
     naacCgpa: row.naac_cgpa ? Number(row.naac_cgpa) : undefined,
     nirfOverallRank: nirfRank ? Number(nirfRank) : undefined,
@@ -304,23 +315,60 @@ export async function queryCollegesFromDatabase(filters: FilterState): Promise<F
 
 
       // States Filter
-      if (filters.selectedStates.length > 0) {
+      if (filters.selectedStates && filters.selectedStates.length > 0) {
         query = query.in('state', filters.selectedStates);
       }
 
-      // Types Filter
-      if (filters.selectedTypes.length > 0) {
-        query = query.in('type', filters.selectedTypes);
+      // Stream Filter
+      if (filters.selectedStreams && filters.selectedStreams.length > 0) {
+        const stream = filters.selectedStreams[0];
+        if (stream && stream !== 'All') {
+          query = query.or(`stream.ilike.%${stream}%,name.ilike.%${stream}%`);
+        }
+      }
+
+      // Types / Categories Filter
+      if (filters.selectedTypes && filters.selectedTypes.length > 0) {
+        const t = filters.selectedTypes[0];
+        if (t && t !== 'All') {
+          if (t === 'Central / IIT / NIT') {
+            query = query.or('university_type.ilike.%Central%,university_type.ilike.%National Importance%,name.ilike.%Indian Institute of Technology%,name.ilike.%National Institute of Technology%');
+          } else if (t === 'State Public') {
+            query = query.or('university_type.ilike.%State Public%,type.ilike.%State%');
+          } else if (t === 'Private Deemed') {
+            query = query.or('university_type.ilike.%Private%,university_type.ilike.%Deemed%');
+          } else if (t === 'Affiliated College' || t === 'College') {
+            query = query.ilike('type', '%College%');
+          } else {
+            query = query.or(`type.ilike.%${t}%,university_type.ilike.%${t}%`);
+          }
+        }
+      }
+
+      // NIRF Rank Filter
+      if (filters.maxNirfRank) {
+        query = query.not('nirf_rank_overall', 'is', null).lte('nirf_rank_overall', filters.maxNirfRank);
+        if (filters.minNirfRank) {
+          query = query.gte('nirf_rank_overall', filters.minNirfRank);
+        }
       }
 
       // Ownership Filter
-      if (filters.selectedOwnership.length > 0) {
+      if (filters.selectedOwnership && filters.selectedOwnership.length > 0) {
         query = query.in('ownership', filters.selectedOwnership);
       }
 
       // NAAC Filter
-      if (filters.selectedNaac.length > 0) {
-        query = query.in('naac_grade', filters.selectedNaac);
+      if (filters.selectedNaac && filters.selectedNaac.length > 0) {
+        const grades = filters.selectedNaac.filter((g) => g !== 'All');
+        if (grades.length > 0) {
+          query = query.in('naac_grade', grades);
+        }
+      }
+
+      // CTC Filter
+      if (filters.minPackageLpa) {
+        query = query.gte('median_package_lpa', filters.minPackageLpa);
       }
 
       // Sorting
