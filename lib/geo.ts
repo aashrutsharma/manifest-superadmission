@@ -176,3 +176,4 @@ export function inferEducationHub(college: College): string {
 
   return 'Other Regional Center';
 }
+

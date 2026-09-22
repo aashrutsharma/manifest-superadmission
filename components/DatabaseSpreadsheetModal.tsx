@@ -19,19 +19,27 @@ import {
 } from 'lucide-react';
 
 
+import InstitutionLogo from '@/components/InstitutionLogo';
+
 interface DatabaseSpreadsheetModalProps {
   isOpen: boolean;
   onClose: () => void;
   colleges: College[];
   onSelectAndFocus: (college: College) => void;
+  comparedIds?: string[];
+  onToggleCompare?: (college: College) => void;
 }
+
 
 export default function DatabaseSpreadsheetModal({
   isOpen,
   onClose,
   colleges,
   onSelectAndFocus,
+  comparedIds,
+  onToggleCompare,
 }: DatabaseSpreadsheetModalProps) {
+
   const [searchTerm, setSearchTerm] = useState('');
   const [activeStream, setActiveStream] = useState<string>('All');
   const [activeType, setActiveType] = useState<string>('All');
@@ -178,27 +186,38 @@ export default function DatabaseSpreadsheetModal({
                     onClick={() => onSelectAndFocus(college)}
                   >
                     <td className="py-3 px-4">
-                      <div className="font-semibold text-slate-900 group-hover:text-[#0b53c3] transition-colors">
-                        {college.name}
-                      </div>
-                      <div className="text-[11px] text-slate-400 font-mono">
-                        {college.shortName || college.code}
+                      <div className="flex items-center gap-2.5">
+                        <InstitutionLogo
+                          name={college.name}
+                          shortName={college.shortName}
+                          slug={college.slug}
+                          code={college.code}
+                          size="sm"
+                        />
+                        <div className="min-w-0">
+                          <div className="font-bold text-slate-900 group-hover:text-[#0b53c3] transition-colors line-clamp-1">
+                            {college.name}
+                          </div>
+                          <div className="text-[11px] text-slate-400 font-mono">
+                            {college.shortName || college.code}
+                          </div>
+                        </div>
                       </div>
                     </td>
 
                     <td className="py-3 px-3">
-                      <span className="font-mono text-[11px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">
+                      <span className="font-mono text-[11px] text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded font-semibold">
                         {college.aisheCode || 'U-INDEX'}
                       </span>
                     </td>
 
                     <td className="py-3 px-3 text-slate-600">
-                      <div>{college.city}</div>
+                      <div className="font-medium text-slate-800">{college.city}</div>
                       <div className="text-[10px] text-slate-400">{college.state}</div>
                     </td>
 
                     <td className="py-3 px-3">
-                      <Badge variant="outline" className="text-[10px] font-normal text-slate-600 border-slate-200">
+                      <Badge variant="outline" className="text-[10px] font-medium text-slate-600 border-slate-200">
                         {college.universityType || 'University'}
                       </Badge>
                     </td>
@@ -216,7 +235,7 @@ export default function DatabaseSpreadsheetModal({
 
                     <td className="py-3 px-3">
                       {college.naacGrade && college.naacGrade !== 'NA' ? (
-                        <span className="font-semibold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">
+                        <span className="font-bold text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200 text-[10px]">
                           {college.naacGrade}
                         </span>
                       ) : (
@@ -224,25 +243,45 @@ export default function DatabaseSpreadsheetModal({
                       )}
                     </td>
 
-                    <td className="py-3 px-3 font-semibold text-slate-800">
+                    <td className="py-3 px-3 font-bold text-slate-900">
                       {college.medianPackageLpa ? `₹${college.medianPackageLpa} LPA` : '—'}
                     </td>
 
                     <td className="py-3 px-4 text-right">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-xs font-semibold gap-1 text-[#0b53c3] hover:text-white hover:bg-[#0b53c3]"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onSelectAndFocus(college);
-                        }}
-                      >
-                        <Crosshair className="w-3.5 h-3.5" />
-                        Focus Map
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        {onToggleCompare && (
+                          <Button
+                            size="sm"
+                            variant={comparedIds?.includes(college.id) ? 'default' : 'outline'}
+                            className={`h-7 px-2 text-[11px] font-semibold rounded-lg ${
+                              comparedIds?.includes(college.id)
+                                ? 'bg-[#0b53c3] text-white'
+                                : 'text-slate-600 border-slate-200 hover:text-[#0b53c3]'
+                            }`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onToggleCompare(college);
+                            }}
+                          >
+                            {comparedIds?.includes(college.id) ? 'In Compare' : '+ Compare'}
+                          </Button>
+                        )}
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="h-7 text-xs font-semibold gap-1 text-[#0b53c3] hover:text-white hover:bg-[#0b53c3]"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onSelectAndFocus(college);
+                          }}
+                        >
+                          <Crosshair className="w-3.5 h-3.5" />
+                          Focus
+                        </Button>
+                      </div>
                     </td>
                   </tr>
+
                 ))
               )}
             </tbody>

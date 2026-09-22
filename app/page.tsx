@@ -1,14 +1,17 @@
 'use client';
 
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { College } from '@/lib/types';
 import { COLLEGES_DATA } from '@/lib/data/colleges';
 import { EDUCATION_HUBS, EducationHub } from '@/lib/geo';
 import ConsoleLogo from '@/components/ConsoleLogo';
+import InstitutionLogo from '@/components/InstitutionLogo';
 import InstitutionInspectorModal from '@/components/InstitutionInspectorModal';
 import DatabaseSpreadsheetModal from '@/components/DatabaseSpreadsheetModal';
 import ManifestArchitectureModal from '@/components/ManifestArchitectureModal';
+import CompareModal from '@/components/CompareModal';
+import ComparisonFloatingBar from '@/components/ComparisonFloatingBar';
 
 import {
   Search,
@@ -25,6 +28,10 @@ import {
   ChevronUp,
   Check,
   X,
+  Layers,
+  GraduationCap,
+  Briefcase,
+  IndianRupee,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 
@@ -33,7 +40,7 @@ import { Input } from '@/components/ui/input';
 const IndiaGlobeMap = dynamic(() => import('@/components/IndiaGlobeMap'), {
   ssr: false,
   loading: () => (
-    <div className="absolute inset-0 w-full h-full bg-[#f1f5f9] flex items-center justify-center text-slate-400 text-xs font-medium">
+    <div className="absolute inset-0 w-full h-full bg-[#f8fafc] flex items-center justify-center text-slate-500 text-xs font-semibold">
       <div className="flex items-center gap-2">
         <div className="w-4 h-4 border-2 border-[#0b53c3] border-t-transparent rounded-full animate-spin" />
         Loading Manifest India Registry...
@@ -43,9 +50,17 @@ const IndiaGlobeMap = dynamic(() => import('@/components/IndiaGlobeMap'), {
 });
 
 export default function ManifestDashboard() {
+  // Live Database Dataset State
+  const [collegesList, setCollegesList] = useState<College[]>(COLLEGES_DATA);
+  const [totalDatabaseCount, setTotalDatabaseCount] = useState<number>(70623);
+  const [isFetchingLive, setIsFetchingLive] = useState<boolean>(false);
+
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedNirfTier, setSelectedNirfTier] = useState<string>('All');
+  const [selectedExam, setSelectedExam] = useState<string>('All');
+  const [selectedBudget, setSelectedBudget] = useState<string>('All');
+  const [selectedCtc, setSelectedCtc] = useState<string>('All');
   const [selectedType, setSelectedType] = useState<string>('All');
   const [selectedNaac, setSelectedNaac] = useState<string>('All');
   const [selectedStream, setSelectedStream] = useState<string>('All');
@@ -55,6 +70,10 @@ export default function ManifestDashboard() {
   const [activeHub, setActiveHub] = useState<EducationHub | null>(null);
   const [resetViewTrigger, setResetViewTrigger] = useState(0);
 
+  // Dynamic Compare State
+  const [comparedColleges, setComparedColleges] = useState<College[]>([]);
+  const [isCompareModalOpen, setIsCompareModalOpen] = useState(false);
+
   // Modals
   const [isDatabaseOpen, setIsDatabaseOpen] = useState(false);
   const [isArchitectureOpen, setIsArchitectureOpen] = useState(false);
@@ -63,13 +82,41 @@ export default function ManifestDashboard() {
   const [dockViewMode, setDockViewMode] = useState<'colleges' | 'programs'>('colleges');
   const [isDockExpanded, setIsDockExpanded] = useState(true);
 
-  // Ask Manifest Natural Query
+  // Ask Manifest Query
   const [askInput, setAskInput] = useState('');
   const [askStatus, setAskStatus] = useState<string | null>(null);
 
+  // Fetch initial batch from live database API (/api/colleges)
+  useEffect(() => {
+    let isMounted = true;
+    async function loadLiveColleges() {
+      try {
+        setIsFetchingLive(true);
+        const res = await fetch('/api/colleges?pageSize=150');
+        if (!res.ok) throw new Error('API failed');
+        const data = await res.json();
+        if (isMounted && data.colleges && data.colleges.length > 0) {
+          // Merge live database records with local enriched records (avoid duplicates)
+          const liveIds = new Set(data.colleges.map((c: College) => c.id));
+          const enrichedOnly = COLLEGES_DATA.filter((c) => !liveIds.has(c.id));
+          setCollegesList([...enrichedOnly, ...data.colleges]);
+          if (data.totalCount) setTotalDatabaseCount(data.totalCount);
+        }
+      } catch {
+        // Gracefully use local dataset
+      } finally {
+        if (isMounted) setIsFetchingLive(false);
+      }
+    }
+    loadLiveColleges();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
   // Filtered dataset
   const filteredColleges = useMemo(() => {
-    return COLLEGES_DATA.filter((college) => {
+    return collegesList.filter((college) => {
       // Search matching
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
@@ -84,13 +131,37 @@ export default function ManifestDashboard() {
         }
       }
 
-      // NIRF Tier matching
+      // NIRF Tier
       if (selectedNirfTier !== 'All') {
         const rank = college.nirfOverallRank;
         if (selectedNirfTier === 'Top 10' && (!rank || rank > 10)) return false;
         if (selectedNirfTier === 'Top 50' && (!rank || rank > 50)) return false;
         if (selectedNirfTier === 'Top 100' && (!rank || rank > 100)) return false;
         if (selectedNirfTier === '100-200' && (!rank || rank < 101 || rank > 200)) return false;
+      }
+
+      // Entrance Exam Filter
+      if (selectedExam !== 'All') {
+        const exams = college.examsAccepted || [];
+        const hasExam = exams.some((e) => e.toLowerCase().includes(selectedExam.toLowerCase()));
+        if (!hasExam) return false;
+      }
+
+      // Budget / Annual Fee Filter
+      if (selectedBudget !== 'All') {
+        const fee = college.avgAnnualFeeMin || 1.5;
+        if (selectedBudget === '< ₹1 Lakh' && fee >= 1.0) return false;
+        if (selectedBudget === '₹1L - ₹3L' && (fee < 1.0 || fee > 3.0)) return false;
+        if (selectedBudget === '₹3L - ₹6L' && (fee < 3.0 || fee > 6.0)) return false;
+        if (selectedBudget === '> ₹6L' && fee <= 6.0) return false;
+      }
+
+      // Placement CTC Filter
+      if (selectedCtc !== 'All') {
+        const ctc = college.medianPackageLpa || 5;
+        if (selectedCtc === '> ₹20 LPA' && ctc < 20) return false;
+        if (selectedCtc === '> ₹12 LPA' && ctc < 12) return false;
+        if (selectedCtc === '> ₹6 LPA' && ctc < 6) return false;
       }
 
       // Type matching
@@ -123,15 +194,25 @@ export default function ManifestDashboard() {
 
       return true;
     });
-  }, [searchQuery, selectedNirfTier, selectedType, selectedNaac, selectedStream]);
+  }, [
+    collegesList,
+    searchQuery,
+    selectedNirfTier,
+    selectedExam,
+    selectedBudget,
+    selectedCtc,
+    selectedType,
+    selectedNaac,
+    selectedStream,
+  ]);
 
   // Leading institutions list for right widget
   const leadingInstitutions = useMemo(() => {
-    return [...COLLEGES_DATA]
+    return [...collegesList]
       .filter((c) => c.nirfOverallRank && c.nirfOverallRank <= 10)
       .sort((a, b) => (a.nirfOverallRank || 999) - (b.nirfOverallRank || 999))
       .slice(0, 5);
-  }, []);
+  }, [collegesList]);
 
   // Discipline counts for right widget
   const disciplineCounts = useMemo(() => {
@@ -142,18 +223,43 @@ export default function ManifestDashboard() {
       Medical: 0,
       Law: 0,
     };
-    COLLEGES_DATA.forEach((c) => {
+    collegesList.forEach((c) => {
       c.streams?.forEach((s) => {
         if (counts[s] !== undefined) counts[s]++;
       });
     });
     return counts;
+  }, [collegesList]);
+
+  // Compare handlers
+  const handleToggleCompare = useCallback((college: College) => {
+    setComparedColleges((prev) => {
+      const exists = prev.some((c) => c.id === college.id);
+      if (exists) {
+        return prev.filter((c) => c.id !== college.id);
+      }
+      if (prev.length >= 4) {
+        return prev;
+      }
+      return [...prev, college];
+    });
+  }, []);
+
+  const handleRemoveFromCompare = useCallback((collegeId: string) => {
+    setComparedColleges((prev) => prev.filter((c) => c.id !== collegeId));
+  }, []);
+
+  const handleClearCompare = useCallback(() => {
+    setComparedColleges([]);
   }, []);
 
   // Reset all filters
   const handleResetFilters = useCallback(() => {
     setSearchQuery('');
     setSelectedNirfTier('All');
+    setSelectedExam('All');
+    setSelectedBudget('All');
+    setSelectedCtc('All');
     setSelectedType('All');
     setSelectedNaac('All');
     setSelectedStream('All');
@@ -170,7 +276,7 @@ export default function ManifestDashboard() {
     setSearchQuery(hub.shortName === 'Delhi-NCR' ? 'Delhi' : hub.shortName);
   };
 
-  // Natural language query handler
+  // Natural query handler
   const handleAskSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!askInput.trim()) return;
@@ -203,7 +309,6 @@ export default function ManifestDashboard() {
     if (query.includes('top 10')) setSelectedNirfTier('Top 10');
     else if (query.includes('top 50')) setSelectedNirfTier('Top 50');
 
-    // Focus on first matching result
     if (filteredColleges.length > 0) {
       setSelectedCollege(filteredColleges[0]);
     }
@@ -211,7 +316,7 @@ export default function ManifestDashboard() {
 
   return (
     <main className="relative w-screen h-screen overflow-hidden bg-[#f8fafc] text-slate-900 font-sans select-none">
-      {/* 1. Full-Bleed Digital India Map */}
+      {/* 1. Full-Bleed Digital India Map & 3D Globe */}
       <IndiaGlobeMap
         colleges={filteredColleges}
         selectedCollege={selectedCollege}
@@ -220,27 +325,47 @@ export default function ManifestDashboard() {
         resetViewTrigger={resetViewTrigger}
       />
 
+      {/* Dynamic Compare Floating Tray (when 1 or more colleges added) */}
+      <ComparisonFloatingBar
+        comparedColleges={comparedColleges}
+        onOpenCompareModal={() => setIsCompareModalOpen(true)}
+        onRemoveCollege={handleRemoveFromCompare}
+        onClearAll={handleClearCompare}
+      />
+
       {/* 2. Top Action Bar */}
-      <header className="fixed top-3 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-transparent pointer-events-auto">
-        {/* Prominent Database Button in Brand Color #0b53c3 */}
+      <header className="fixed top-3.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-transparent pointer-events-auto">
+        {/* Prominent Database Button in Primary #0b53c3 */}
         <button
           type="button"
           onClick={() => setIsDatabaseOpen(true)}
-          className="flex items-center gap-2 px-4 py-2 bg-[#0b53c3] hover:bg-[#09429e] text-white rounded-full shadow-md font-semibold text-xs tracking-tight transition-all hover:scale-105 active:scale-95"
+          className="flex items-center gap-2.5 px-5 py-2.5 bg-[#0b53c3] hover:bg-[#09429e] text-white rounded-full shadow-lg font-bold text-xs tracking-tight transition-all hover:scale-105 active:scale-95 border border-blue-400/30"
         >
-          <Database className="w-3.5 h-3.5 text-white" />
-          <span>Database</span>
-          <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded-full font-mono">
-            {filteredColleges.length}
+          <Database className="w-4 h-4 text-white" />
+          <span className="text-[13px]">Database</span>
+          <span className="text-[11px] bg-white/25 px-2 py-0.5 rounded-full font-mono font-bold">
+            {totalDatabaseCount.toLocaleString()}
           </span>
         </button>
+
+        {/* Dynamic Compare Action Pill (if 2+ colleges added) */}
+        {comparedColleges.length > 0 && (
+          <button
+            type="button"
+            onClick={() => setIsCompareModalOpen(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-full shadow-md font-bold text-xs transition-all"
+          >
+            <Layers className="w-3.5 h-3.5 text-blue-400" />
+            <span>Compare ({comparedColleges.length})</span>
+          </button>
+        )}
 
         {/* Architecture Info Button (?) */}
         <button
           type="button"
           onClick={() => setIsArchitectureOpen(true)}
           aria-label="What is Manifest"
-          className="w-8 h-8 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 text-slate-600 hover:text-[#0b53c3] hover:border-[#0b53c3]/40 shadow-sm flex items-center justify-center text-xs font-bold transition-colors"
+          className="w-9 h-9 rounded-full bg-white/95 backdrop-blur-xl border border-slate-200/90 text-slate-700 hover:text-[#0b53c3] hover:border-[#0b53c3]/40 shadow-sm flex items-center justify-center text-xs font-bold transition-colors"
         >
           <HelpCircle className="w-4 h-4" />
         </button>
@@ -250,73 +375,60 @@ export default function ManifestDashboard() {
           type="button"
           onClick={handleResetFilters}
           aria-label="Reset Map to Full India"
-          className="w-8 h-8 rounded-full bg-white/95 backdrop-blur-md border border-slate-200/90 text-slate-600 hover:text-slate-900 shadow-sm flex items-center justify-center transition-colors"
+          className="w-9 h-9 rounded-full bg-white/95 backdrop-blur-xl border border-slate-200/90 text-slate-700 hover:text-slate-900 shadow-sm flex items-center justify-center transition-colors"
           title="Reset View"
         >
           <Compass className="w-4 h-4" />
         </button>
       </header>
 
-      {/* 3. Floating Left Sidebar (Cockpit Filters) */}
-      <aside className="fixed top-3 left-3 bottom-3 w-[305px] z-20 bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/90 shadow-xl flex flex-col overflow-hidden pointer-events-auto">
-        {/* Top Header */}
-        <div className="p-4 pb-3 border-b border-slate-100">
-          <div className="flex items-center justify-between mb-2">
-            <a
-              href="https://superadmission.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-[11px] text-slate-400 hover:text-slate-700 transition-colors flex items-center gap-1 font-medium"
-            >
-              &larr; Superadmission
-            </a>
-            <span className="text-[10px] font-mono text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">
-              AISHE 2024-25
-            </span>
+      {/* 3. Floating Left Sidebar (Clean Console Logo Header, Rich Student Filters) */}
+      <aside className="fixed top-3 left-3 bottom-3 w-[335px] z-20 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-2xl flex flex-col overflow-hidden pointer-events-auto">
+        {/* Top Header with Console Logo */}
+        <div className="p-5 pb-4 border-b border-slate-100">
+          <div className="flex items-center justify-center py-1">
+            <ConsoleLogo size="lg" className="justify-center" />
           </div>
 
-          <div className="flex items-center gap-2">
-            <ConsoleLogo size="md" />
-            <div className="h-4 w-[1px] bg-slate-200 mx-0.5" />
-            <span className="font-bold text-slate-900 text-sm tracking-tight">Manifest</span>
-          </div>
-
-          <p className="text-[11px] text-slate-500 mt-1 leading-snug">
-            Registry of 70,000+ Indian degree-granting higher education institutions.
+          <p className="text-xs text-slate-500 font-medium text-center mt-2 leading-relaxed">
+            Registry of <span className="font-bold text-slate-800">{totalDatabaseCount.toLocaleString()}</span> degree-granting higher education institutions.
           </p>
 
           {/* Search Input */}
-          <div className="relative mt-3">
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+          <div className="relative mt-3.5">
+            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search institution, city, or AISHE..."
-              className="pl-8 pr-7 h-8 text-xs bg-slate-50/80 border-slate-200 rounded-lg focus-visible:ring-[#0b53c3]"
+              placeholder="Search 70,000+ colleges, cities, AISHE..."
+              className="pl-9 pr-8 h-9 text-xs bg-slate-50/90 border-slate-200 rounded-xl font-medium focus-visible:ring-[#0b53c3]"
             />
             {searchQuery && (
               <button
                 type="button"
                 onClick={() => setSearchQuery('')}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
               >
-                <X className="w-3 h-3" />
+                <X className="w-3.5 h-3.5" />
               </button>
             )}
           </div>
         </div>
 
-        {/* Scrollable Filters */}
-        <div className="p-4 overflow-y-auto flex-1 space-y-4 text-xs">
-          {/* NIRF TIER */}
+        {/* Scrollable Filters Body */}
+        <div className="p-5 overflow-y-auto flex-1 space-y-4 text-xs">
+          {/* 1. NIRF RANK TIER */}
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
-              <span>NIRF Rank Tier</span>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center justify-between">
+              <span className="flex items-center gap-1.5">
+                <Award className="w-3.5 h-3.5 text-[#0b53c3]" />
+                NIRF Rank Tier
+              </span>
               {selectedNirfTier !== 'All' && (
                 <button
                   type="button"
                   onClick={() => setSelectedNirfTier('All')}
-                  className="text-[#0b53c3] text-[10px] lowercase hover:underline"
+                  className="text-[#0b53c3] text-[10px] font-bold lowercase hover:underline"
                 >
                   clear
                 </button>
@@ -328,10 +440,10 @@ export default function ManifestDashboard() {
                   key={tier}
                   type="button"
                   onClick={() => setSelectedNirfTier(tier)}
-                  className={`px-2 py-1.5 rounded-lg text-xs font-semibold transition-all text-center ${
+                  className={`px-2 py-2 rounded-xl text-xs font-bold transition-all text-center ${
                     selectedNirfTier === tier
                       ? 'bg-[#0b53c3] text-white shadow-xs'
-                      : 'bg-slate-100/80 text-slate-600 hover:bg-slate-200/70'
+                      : 'bg-slate-100/90 text-slate-700 hover:bg-slate-200/80'
                   }`}
                 >
                   {tier}
@@ -340,9 +452,81 @@ export default function ManifestDashboard() {
             </div>
           </div>
 
-          {/* INSTITUTION TYPE */}
+          {/* 2. ACCEPTED ENTRANCE EXAM */}
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+              <GraduationCap className="w-3.5 h-3.5 text-[#0b53c3]" />
+              Entrance Exam
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {['All', 'JEE Advanced', 'JEE Main', 'NEET-UG', 'CAT', 'GATE', 'CUET', 'CLAT'].map((exam) => (
+                <button
+                  key={exam}
+                  type="button"
+                  onClick={() => setSelectedExam(exam === 'All' ? 'All' : exam)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all ${
+                    selectedExam === exam
+                      ? 'bg-[#0b53c3] text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200/70'
+                  }`}
+                >
+                  {exam}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3. TUITION BUDGET RANGE */}
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+              <IndianRupee className="w-3.5 h-3.5 text-[#0b53c3]" />
+              Annual Tuition Budget
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {['All', '< ₹1 Lakh', '₹1L - ₹3L', '₹3L - ₹6L'].map((budget) => (
+                <button
+                  key={budget}
+                  type="button"
+                  onClick={() => setSelectedBudget(budget)}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-semibold transition-all text-center ${
+                    selectedBudget === budget
+                      ? 'bg-[#0b53c3] text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200/70'
+                  }`}
+                >
+                  {budget}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 4. MEDIAN PLACEMENT TIER */}
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2 flex items-center gap-1.5">
+              <Briefcase className="w-3.5 h-3.5 text-[#0b53c3]" />
+              Placement Package Tier
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {['All', '> ₹20 LPA', '> ₹12 LPA', '> ₹6 LPA'].map((ctc) => (
+                <button
+                  key={ctc}
+                  type="button"
+                  onClick={() => setSelectedCtc(ctc)}
+                  className={`px-2 py-1.5 rounded-lg text-xs font-semibold transition-all text-center ${
+                    selectedCtc === ctc
+                      ? 'bg-[#0b53c3] text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200/70'
+                  }`}
+                >
+                  {ctc}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 5. INSTITUTION CATEGORY */}
+          <div>
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
               Institution Category
             </div>
             <div className="space-y-1">
@@ -356,10 +540,10 @@ export default function ManifestDashboard() {
                   key={item.value}
                   type="button"
                   onClick={() => setSelectedType(item.value)}
-                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
                     selectedType === item.value
-                      ? 'bg-blue-50 text-[#0b53c3] font-semibold'
-                      : 'text-slate-600 hover:bg-slate-100/80'
+                      ? 'bg-blue-50 text-[#0b53c3] font-bold'
+                      : 'text-slate-700 hover:bg-slate-100/80'
                   }`}
                 >
                   <span className="truncate">{item.label}</span>
@@ -369,10 +553,10 @@ export default function ManifestDashboard() {
             </div>
           </div>
 
-          {/* ACCREDITATION */}
+          {/* 6. ACCREDITATION */}
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-              Accreditation
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+              NAAC Accreditation
             </div>
             <div className="flex flex-wrap gap-1.5">
               {['All', 'A++', 'A+', 'A'].map((grade) => (
@@ -380,10 +564,10 @@ export default function ManifestDashboard() {
                   key={grade}
                   type="button"
                   onClick={() => setSelectedNaac(grade)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-colors ${
+                  className={`px-3 py-1 rounded-xl text-xs font-bold transition-all ${
                     selectedNaac === grade
-                      ? 'bg-[#0b53c3] text-white font-semibold'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200/80'
+                      ? 'bg-[#0b53c3] text-white shadow-xs'
+                      : 'bg-slate-100 text-slate-700 hover:bg-slate-200/80'
                   }`}
                 >
                   {grade === 'All' ? 'All NAAC' : `NAAC ${grade}`}
@@ -392,10 +576,10 @@ export default function ManifestDashboard() {
             </div>
           </div>
 
-          {/* DISCIPLINES / STREAMS */}
+          {/* 7. DISCIPLINES */}
           <div>
-            <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mb-2">
-              Discipline / Stream
+            <div className="text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-2">
+              Academic Stream
             </div>
             <div className="space-y-1">
               {['All', 'Engineering', 'Management', 'Medical', 'Arts & Science', 'Law'].map(
@@ -404,13 +588,13 @@ export default function ManifestDashboard() {
                     key={stream}
                     type="button"
                     onClick={() => setSelectedStream(stream)}
-                    className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                    className={`w-full flex items-center justify-between px-3 py-1.5 rounded-xl text-xs font-medium transition-colors ${
                       selectedStream === stream
-                        ? 'bg-blue-50 text-[#0b53c3] font-semibold'
-                        : 'text-slate-600 hover:bg-slate-100/80'
+                        ? 'bg-blue-50 text-[#0b53c3] font-bold'
+                        : 'text-slate-700 hover:bg-slate-100/80'
                     }`}
                   >
-                    <span>{stream === 'All' ? 'All Disciplines' : stream}</span>
+                    <span>{stream === 'All' ? 'All Streams' : stream}</span>
                     {selectedStream === stream && (
                       <Check className="w-3.5 h-3.5 text-[#0b53c3]" />
                     )}
@@ -422,39 +606,40 @@ export default function ManifestDashboard() {
         </div>
 
         {/* Footer info & reset */}
-        <div className="p-3 border-t border-slate-100 bg-slate-50/70 flex items-center justify-between text-xs">
-          <div className="text-[11px] text-slate-500 font-medium">
-            <span className="font-bold text-slate-900">{filteredColleges.length}</span> of 72,000+
+        <div className="p-4 border-t border-slate-100 bg-slate-50/80 flex items-center justify-between text-xs">
+          <div className="text-xs text-slate-600 font-semibold">
+            <span className="font-extrabold text-slate-900">{filteredColleges.length}</span> visible
+            {isFetchingLive && <span className="ml-1 text-[#0b53c3] font-bold animate-pulse">&middot; live</span>}
           </div>
           <button
             type="button"
             onClick={handleResetFilters}
-            className="text-[11px] font-semibold text-[#0b53c3] hover:text-[#09429e] flex items-center gap-1"
+            className="text-xs font-bold text-[#0b53c3] hover:text-[#09429e] flex items-center gap-1.5"
           >
-            <RotateCcw className="w-3 h-3" />
-            Reset
+            <RotateCcw className="w-3.5 h-3.5" />
+            Reset All
           </button>
         </div>
       </aside>
 
-      {/* 4. Bottom Data Dock (Interactive Pill Card Strip) */}
-      <section className="fixed bottom-3 left-[325px] right-[325px] max-w-4xl mx-auto z-20 pointer-events-auto bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/90 shadow-xl overflow-hidden transition-all">
+      {/* 4. Bottom Data Dock (Interactive Pill Card Strip with Logos) */}
+      <section className="fixed bottom-3.5 left-[355px] right-[355px] max-w-4xl mx-auto z-20 pointer-events-auto bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden transition-all">
         {/* Dock Header */}
-        <div className="px-3.5 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/50">
-          <div className="flex items-center gap-2">
-            <div className="w-5 h-5 rounded bg-[#0b53c3] flex items-center justify-center text-white text-[10px] font-bold">
+        <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/70">
+          <div className="flex items-center gap-2.5">
+            <div className="w-6 h-6 rounded-lg bg-[#0b53c3] flex items-center justify-center text-white text-xs font-black shadow-xs">
               M
             </div>
             <div className="text-xs font-bold text-slate-900 tracking-tight">
-              Current view <span className="font-mono text-[#0b53c3]">{filteredColleges.length}</span>
+              Current view <span className="font-mono text-[#0b53c3] font-extrabold">{filteredColleges.length}</span>
             </div>
 
-            {/* Mode Toggle Pills: Institutions vs Top Programs */}
-            <div className="flex items-center p-0.5 bg-slate-200/70 rounded-lg ml-2">
+            {/* Mode Toggle: Institutions vs Top Programs */}
+            <div className="flex items-center p-0.5 bg-slate-200/70 rounded-xl ml-2">
               <button
                 type="button"
                 onClick={() => setDockViewMode('colleges')}
-                className={`px-2.5 py-0.5 text-[11px] font-semibold rounded-md transition-all ${
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
                   dockViewMode === 'colleges'
                     ? 'bg-[#0b53c3] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -465,7 +650,7 @@ export default function ManifestDashboard() {
               <button
                 type="button"
                 onClick={() => setDockViewMode('programs')}
-                className={`px-2.5 py-0.5 text-[11px] font-semibold rounded-md transition-all ${
+                className={`px-3 py-1 text-xs font-bold rounded-lg transition-all ${
                   dockViewMode === 'programs'
                     ? 'bg-[#0b53c3] text-white shadow-xs'
                     : 'text-slate-600 hover:text-slate-900'
@@ -477,13 +662,13 @@ export default function ManifestDashboard() {
           </div>
 
           <div className="flex items-center gap-2">
-            <span className="text-[11px] text-slate-400 hidden sm:inline">
+            <span className="text-[11px] text-slate-400 font-medium hidden sm:inline">
               Click any chip to inspect
             </span>
             <button
               type="button"
               onClick={() => setIsDockExpanded(!isDockExpanded)}
-              className="p-1 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors"
+              className="p-1 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-200/60 transition-colors"
               aria-label={isDockExpanded ? 'Collapse dock' : 'Expand dock'}
             >
               {isDockExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronUp className="w-4 h-4" />}
@@ -491,52 +676,74 @@ export default function ManifestDashboard() {
           </div>
         </div>
 
-        {/* Chips Wrap Grid */}
+        {/* Chips Wrap Grid with Crisp Logos */}
         {isDockExpanded && (
-          <div className="p-3 max-h-[140px] overflow-y-auto">
+          <div className="p-3.5 max-h-[155px] overflow-y-auto">
             {dockViewMode === 'colleges' ? (
-              <div className="flex flex-wrap gap-1.5">
-                {filteredColleges.slice(0, 24).map((college) => {
+              <div className="flex flex-wrap gap-2">
+                {filteredColleges.slice(0, 28).map((college) => {
                   const isSelected = selectedCollege?.id === college.id;
+                  const isCompared = comparedColleges.some((c) => c.id === college.id);
                   return (
                     <button
                       key={college.id}
                       type="button"
                       onClick={() => setSelectedCollege(college)}
-                      className={`px-2.5 py-1 rounded-xl text-xs font-medium transition-all flex items-center gap-1.5 border ${
+                      className={`pl-1.5 pr-3 py-1 rounded-2xl text-xs font-semibold transition-all flex items-center gap-2 border shadow-2xs ${
                         isSelected
-                          ? 'bg-[#0b53c3] text-white border-[#0b53c3] shadow-sm'
-                          : 'bg-white hover:bg-blue-50/50 text-slate-700 border-slate-200 hover:border-blue-300'
+                          ? 'bg-[#0b53c3] text-white border-[#0b53c3] shadow-md scale-105'
+                          : 'bg-white hover:bg-blue-50/50 text-slate-800 border-slate-200/80 hover:border-blue-300'
                       }`}
                     >
-                      <span className="font-semibold">{college.shortName || college.name}</span>
+                      <InstitutionLogo
+                        name={college.name}
+                        shortName={college.shortName}
+                        slug={college.slug}
+                        code={college.code}
+                        size="xs"
+                      />
+                      <span className="truncate max-w-[150px] font-bold">
+                        {college.shortName || college.name}
+                      </span>
                       {college.nirfOverallRank && (
                         <span
-                          className={`text-[10px] font-bold px-1 rounded ${
+                          className={`text-[10px] font-black px-1.5 py-0.2 rounded-md ${
                             isSelected ? 'bg-white/20 text-white' : 'bg-blue-50 text-[#0b53c3]'
                           }`}
                         >
                           #{college.nirfOverallRank}
                         </span>
                       )}
+                      {isCompared && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" title="In compare" />
+                      )}
                     </button>
                   );
                 })}
               </div>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {filteredColleges.slice(0, 16).flatMap((college) =>
+              <div className="flex flex-wrap gap-2">
+                {filteredColleges.slice(0, 18).flatMap((college) =>
                   (college.courses || []).slice(0, 1).map((course) => (
                     <button
                       key={course.id}
                       type="button"
                       onClick={() => setSelectedCollege(college)}
-                      className="px-2.5 py-1 rounded-xl text-xs font-medium bg-white hover:bg-blue-50/50 text-slate-700 border border-slate-200 flex items-center gap-2"
+                      className="pl-2 pr-3 py-1.5 rounded-2xl text-xs font-semibold bg-white hover:bg-blue-50/50 text-slate-800 border border-slate-200 flex items-center gap-2 shadow-2xs"
                     >
-                      <span className="font-semibold text-slate-900">{course.name}</span>
-                      <span className="text-[10px] text-slate-400">
-                        {college.shortName} &middot; ₹{(course.annualFee / 100000).toFixed(1)}L/yr
-                      </span>
+                      <InstitutionLogo
+                        name={college.name}
+                        shortName={college.shortName}
+                        slug={college.slug}
+                        code={college.code}
+                        size="xs"
+                      />
+                      <div className="text-left">
+                        <div className="font-bold text-slate-900 text-xs">{course.name}</div>
+                        <div className="text-[10px] text-slate-400">
+                          {college.shortName} &middot; ₹{(course.annualFee / 100000).toFixed(1)}L/yr
+                        </div>
+                      </div>
                     </button>
                   ))
                 )}
@@ -547,21 +754,21 @@ export default function ManifestDashboard() {
       </section>
 
       {/* 5. Floating Right Widgets Stack */}
-      <aside className="fixed top-3 right-3 bottom-3 w-[295px] z-20 flex flex-col gap-2.5 pointer-events-auto overflow-y-auto">
+      <aside className="fixed top-3.5 right-3.5 bottom-3.5 w-[310px] z-20 flex flex-col gap-2.5 pointer-events-auto overflow-y-auto">
         {/* Widget 1: Leading Institutions */}
-        <div className="p-3.5 bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/90 shadow-lg">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-2.5">
+        <div className="p-4 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-xl">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-3">
             <span className="flex items-center gap-1.5">
-              <Award className="w-3.5 h-3.5 text-[#0b53c3]" />
+              <Award className="w-4 h-4 text-[#0b53c3]" />
               Leading Institutions
             </span>
-            <span className="text-[10px] font-mono text-slate-400 font-normal">NIRF 2024</span>
+            <span className="text-[10px] font-mono text-slate-400 font-semibold">NIRF 2024</span>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-2.5">
             {leadingInstitutions.map((college) => {
               const rank = college.nirfOverallRank || 1;
-              const percent = Math.max(10, 100 - (rank - 1) * 9);
+              const percent = Math.max(15, 100 - (rank - 1) * 9);
               return (
                 <button
                   key={college.id}
@@ -570,14 +777,23 @@ export default function ManifestDashboard() {
                   className="w-full text-left group"
                 >
                   <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="font-semibold text-slate-800 group-hover:text-[#0b53c3] transition-colors truncate">
-                      {college.shortName || college.name}
-                    </span>
-                    <span className="font-bold text-[#0b53c3] text-[11px] shrink-0 ml-2">
+                    <div className="flex items-center gap-2 truncate">
+                      <InstitutionLogo
+                        name={college.name}
+                        shortName={college.shortName}
+                        slug={college.slug}
+                        code={college.code}
+                        size="xs"
+                      />
+                      <span className="font-bold text-slate-800 group-hover:text-[#0b53c3] transition-colors truncate">
+                        {college.shortName || college.name}
+                      </span>
+                    </div>
+                    <span className="font-black text-[#0b53c3] text-xs shrink-0 ml-2">
                       #{rank}
                     </span>
                   </div>
-                  {/* Progress Bar Meter filled in #0b53c3 */}
+                  {/* Progress Bar Meter in #0b53c3 */}
                   <div className="w-full h-1.5 bg-slate-100 rounded-full overflow-hidden">
                     <div
                       className="h-full bg-[#0b53c3] rounded-full transition-all duration-500"
@@ -591,13 +807,13 @@ export default function ManifestDashboard() {
         </div>
 
         {/* Widget 2: Education Hubs */}
-        <div className="p-3.5 bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/90 shadow-lg">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-2">
+        <div className="p-4 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-xl">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-2.5">
             <span className="flex items-center gap-1.5">
-              <MapPin className="w-3.5 h-3.5 text-[#0b53c3]" />
-              Education Hubs
+              <MapPin className="w-4 h-4 text-[#0b53c3]" />
+              Key Education Hubs
             </span>
-            <span className="text-[10px] font-mono text-slate-400 font-normal">70k+</span>
+            <span className="text-[10px] font-mono text-slate-400 font-semibold">70k+</span>
           </div>
 
           <div className="space-y-1">
@@ -608,17 +824,17 @@ export default function ManifestDashboard() {
                   key={hub.id}
                   type="button"
                   onClick={() => handleSelectHub(hub)}
-                  className={`w-full flex items-center justify-between px-2 py-1.5 rounded-lg text-xs transition-all text-left ${
+                  className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-all text-left ${
                     isActive
-                      ? 'bg-blue-50 text-[#0b53c3] font-semibold'
-                      : 'text-slate-700 hover:bg-slate-100/70'
+                      ? 'bg-blue-50 text-[#0b53c3] font-bold shadow-2xs'
+                      : 'text-slate-700 hover:bg-slate-100/80'
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 truncate">
-                    <span className="text-[10px] text-slate-400 font-mono">{index + 1}.</span>
-                    <span className="truncate">{hub.name}</span>
+                  <div className="flex items-center gap-2 truncate">
+                    <span className="text-[10px] text-slate-400 font-mono font-bold">{index + 1}.</span>
+                    <span className="truncate font-semibold">{hub.name}</span>
                   </div>
-                  <span className="font-mono text-[11px] text-slate-500 shrink-0">
+                  <span className="font-mono text-xs text-slate-500 font-bold shrink-0">
                     {hub.count.toLocaleString()}
                   </span>
                 </button>
@@ -628,13 +844,13 @@ export default function ManifestDashboard() {
         </div>
 
         {/* Widget 3: Disciplines */}
-        <div className="p-3.5 bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/90 shadow-lg">
-          <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-2">
+        <div className="p-4 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-xl">
+          <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-2.5">
             <span className="flex items-center gap-1.5">
-              <TrendingUp className="w-3.5 h-3.5 text-[#0b53c3]" />
+              <TrendingUp className="w-4 h-4 text-[#0b53c3]" />
               Disciplines
             </span>
-            <span className="text-[10px] font-mono text-slate-400 font-normal">Streams</span>
+            <span className="text-[10px] font-mono text-slate-400 font-semibold">Distribution</span>
           </div>
 
           <div className="space-y-1">
@@ -643,24 +859,24 @@ export default function ManifestDashboard() {
                 key={stream}
                 type="button"
                 onClick={() => setSelectedStream(stream)}
-                className={`w-full flex items-center justify-between px-2 py-1 rounded-lg text-xs transition-colors ${
+                className={`w-full flex items-center justify-between px-2.5 py-1.5 rounded-xl text-xs transition-colors ${
                   selectedStream === stream
-                    ? 'bg-blue-50 text-[#0b53c3] font-semibold'
-                    : 'text-slate-600 hover:bg-slate-100/70'
+                    ? 'bg-blue-50 text-[#0b53c3] font-bold'
+                    : 'text-slate-600 hover:bg-slate-100/80'
                 }`}
               >
-                <span>{stream}</span>
-                <span className="font-mono text-[11px] text-slate-400">{count}</span>
+                <span className="font-semibold">{stream}</span>
+                <span className="font-mono text-xs text-slate-500 font-bold">{count}</span>
               </button>
             ))}
           </div>
         </div>
 
-        {/* Widget 4: Ask Manifest Query Box (Series B Startup Polish) */}
-        <div className="p-3.5 bg-white/95 backdrop-blur-xl rounded-2xl border border-slate-200/90 shadow-lg">
+        {/* Widget 4: Ask Manifest Query Box */}
+        <div className="p-4 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-xl">
           <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-1">
             <span className="flex items-center gap-1.5 text-slate-900">
-              <Sparkles className="w-3.5 h-3.5 text-[#0b53c3]" />
+              <Sparkles className="w-4 h-4 text-[#0b53c3]" />
               Ask Manifest
             </span>
             {askStatus && (
@@ -670,14 +886,14 @@ export default function ManifestDashboard() {
                   setAskStatus(null);
                   setAskInput('');
                 }}
-                className="text-[10px] text-slate-400 hover:text-slate-700"
+                className="text-[10px] text-slate-400 hover:text-slate-700 font-bold"
               >
                 clear
               </button>
             )}
           </div>
 
-          <p className="text-[11px] text-slate-500 mb-2.5 leading-tight italic">
+          <p className="text-[11px] text-slate-500 mb-3 leading-tight italic">
             70,000+ colleges indexed. What are you looking for?
           </p>
 
@@ -687,20 +903,20 @@ export default function ManifestDashboard() {
                 value={askInput}
                 onChange={(e) => setAskInput(e.target.value)}
                 placeholder="e.g. top CSE in Bengaluru..."
-                className="pr-8 h-8 text-xs bg-slate-50 border-slate-200 rounded-lg focus-visible:ring-[#0b53c3]"
+                className="pr-9 h-9 text-xs bg-slate-50 border-slate-200 rounded-xl font-medium focus-visible:ring-[#0b53c3]"
               />
               <button
                 type="submit"
-                className="w-6 h-6 rounded-md bg-[#0b53c3] hover:bg-[#09429e] text-white flex items-center justify-center absolute right-1 top-1/2 -translate-y-1/2 transition-colors"
+                className="w-7 h-7 rounded-lg bg-[#0b53c3] hover:bg-[#09429e] text-white flex items-center justify-center absolute right-1 top-1/2 -translate-y-1/2 transition-all shadow-xs"
                 aria-label="Send query"
               >
-                <ArrowRight className="w-3 h-3" />
+                <ArrowRight className="w-3.5 h-3.5" />
               </button>
             </div>
           </form>
 
           {/* Quick Suggestions */}
-          <div className="mt-2 flex flex-wrap gap-1">
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
             {[
               'Top 10 Engineering',
               'Bengaluru Tech',
@@ -720,7 +936,7 @@ export default function ManifestDashboard() {
                   if (tag.includes('Top 10')) setSelectedNirfTier('Top 10');
                   if (tag.includes('A++')) setSelectedNaac('A++');
                 }}
-                className="px-2 py-0.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-[10px] transition-colors"
+                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-[10px] font-semibold transition-colors"
               >
                 {tag}
               </button>
@@ -729,10 +945,12 @@ export default function ManifestDashboard() {
         </div>
       </aside>
 
-      {/* 6. Floating Institution Inspector Card */}
+      {/* 6. Floating Widespread Institution Inspector Card / Drawer */}
       <InstitutionInspectorModal
         college={selectedCollege}
         onClose={() => setSelectedCollege(null)}
+        isCompared={selectedCollege ? comparedColleges.some((c) => c.id === selectedCollege.id) : false}
+        onToggleCompare={handleToggleCompare}
       />
 
       {/* 7. Full Database Spreadsheet Modal */}
@@ -744,9 +962,21 @@ export default function ManifestDashboard() {
           setSelectedCollege(college);
           setIsDatabaseOpen(false);
         }}
+        comparedIds={comparedColleges.map((c) => c.id)}
+        onToggleCompare={handleToggleCompare}
       />
 
-      {/* 8. About Manifest Architecture Modal */}
+      {/* 8. Dynamic Compare Benchmark Matrix Modal */}
+      <CompareModal
+        comparedColleges={comparedColleges}
+        isOpen={isCompareModalOpen}
+        onClose={() => setIsCompareModalOpen(false)}
+        onRemoveCollege={handleRemoveFromCompare}
+        onClearAll={handleClearCompare}
+      />
+
+
+      {/* 9. About Manifest Architecture Modal */}
       <ManifestArchitectureModal
         isOpen={isArchitectureOpen}
         onClose={() => setIsArchitectureOpen(false)}
