@@ -1,7 +1,6 @@
 import { supabase, isSupabaseConfigured } from './supabase';
 import { College, Course, FilterState } from './types';
 import { COLLEGES_DATA } from './data/colleges';
-import { expandSearchQuery } from './acronyms';
 
 function inferStreamsFromNameAndData(row: Record<string, any>): string[] {
   const streams = new Set<string>();
@@ -288,32 +287,21 @@ export async function queryCollegesFromDatabase(filters: FilterState): Promise<F
   if (isLive) {
     try {
       const targetTable = 'institutions';
-      let query = supabase.from(targetTable).select('*', { count: 'exact' });
+      const hasSearch = Boolean(filters.searchQuery && filters.searchQuery.trim());
+      // Skip expensive exact count during text search to prevent Postgres statement timeouts
+      let query = supabase.from(targetTable).select('*', hasSearch ? undefined : { count: 'exact' });
 
       // Search with acronym & substring expansion
-      if (filters.searchQuery.trim()) {
+      if (hasSearch) {
         const raw = filters.searchQuery.trim();
-        const expansions = expandSearchQuery(raw);
-        const searchTerms = [raw, ...expansions.slice(1, 3)];
-
-        const conditions: string[] = [];
-        searchTerms.forEach((term) => {
-          const clean = term.replace(/['"%,()]/g, '');
-          if (clean.length > 0) {
-            conditions.push(
-              `name.ilike.%${clean}%`,
-              `city.ilike.%${clean}%`,
-              `state.ilike.%${clean}%`,
-              `aishe_code.ilike.%${clean}%`,
-              `parent_university.ilike.%${clean}%`
-            );
-          }
-        });
-
-        if (conditions.length > 0) {
-          query = query.or(conditions.join(','));
+        const clean = raw.replace(/['"%,()]/g, '');
+        if (clean.length > 0) {
+          query = query.or(
+            `name.ilike.%${clean}%,city.ilike.%${clean}%,state.ilike.%${clean}%,aishe_code.ilike.%${clean}%`
+          );
         }
       }
+
 
       // States Filter
       if (filters.selectedStates.length > 0) {

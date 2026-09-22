@@ -42,7 +42,7 @@ export default function CompareModal({
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-5xl max-h-[90vh] flex flex-col p-0 overflow-hidden bg-white rounded-2xl border border-slate-200/90 shadow-2xl">
+      <DialogContent className="w-[96vw] max-w-[1360px] max-h-[92vh] flex flex-col p-0 overflow-hidden bg-white rounded-2xl border border-slate-200/90 shadow-2xl">
         {/* Header */}
         <div className="p-5 border-b border-slate-100 bg-slate-50/80 flex items-center justify-between">
           <div className="flex items-center gap-2.5">

@@ -1,12 +1,11 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import type { Map as LeafletMap, LayerGroup } from 'leaflet';
+import type { Map as LeafletMap, LayerGroup, TileLayer } from 'leaflet';
 import * as d3 from 'd3';
 import { College } from '@/lib/types';
 import { EDUCATION_HUBS, EducationHub } from '@/lib/geo';
-import { Globe, Map } from 'lucide-react';
-
+import { Globe, Map, Eye, Layers } from 'lucide-react';
 
 interface IndiaGlobeMapProps {
   colleges: College[];
@@ -16,6 +15,28 @@ interface IndiaGlobeMapProps {
   resetViewTrigger: number;
 }
 
+type MapTheme = 'streets' | 'satellite' | 'topo' | '3d';
+
+const TILE_CONFIGS: Record<
+  'streets' | 'satellite' | 'topo',
+  { base: string; reference?: string; maxZoom: number }
+> = {
+  streets: {
+    base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}',
+    maxZoom: 18,
+  },
+  satellite: {
+    base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    reference:
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+    maxZoom: 18,
+  },
+  topo: {
+    base: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Topo_Map/MapServer/tile/{z}/{y}/{x}',
+    maxZoom: 18,
+  },
+};
+
 export default function IndiaGlobeMap({
   colleges,
   selectedCollege,
@@ -23,11 +44,13 @@ export default function IndiaGlobeMap({
   activeHub,
   resetViewTrigger,
 }: IndiaGlobeMapProps) {
-  const [mapMode, setMapMode] = useState<'2d' | '3d'>('2d');
+  const [mapTheme, setMapTheme] = useState<MapTheme>('streets');
 
   // Leaflet 2D Refs
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<LeafletMap | null>(null);
+  const baseTileLayerRef = useRef<TileLayer | null>(null);
+  const refTileLayerRef = useRef<TileLayer | null>(null);
   const markersLayerRef = useRef<LayerGroup | null>(null);
   const hubsLayerRef = useRef<LayerGroup | null>(null);
 
@@ -36,10 +59,10 @@ export default function IndiaGlobeMap({
   const rotationRef = useRef<[number, number]>([-78.9, -21.8]);
 
   // ==========================================
-  // 1. Leaflet 2D Setup (Esri Light Gray - ZERO WATERMARKS)
+  // 1. Leaflet 2D Initialization
   // ==========================================
   useEffect(() => {
-    if (mapMode !== '2d') return;
+    if (mapTheme === '3d') return;
     if (!mapContainerRef.current) return;
     if (mapInstanceRef.current) return;
 
@@ -55,32 +78,30 @@ export default function IndiaGlobeMap({
         shadowUrl: '',
       });
 
-      // Esri World Light Gray Base (The SaaS Gold Standard - completely free, NO API key required)
+      // Best in class Leaflet GIS Viewport for India
       const map = L.map(mapContainerRef.current, {
         center: [21.8, 79.2],
         zoom: 5.2,
         minZoom: 4,
-        maxZoom: 16,
+        maxZoom: 18,
         zoomControl: false,
         attributionControl: false,
       });
 
-      // Base layer: Soft light gray landmass & clean white water
-      L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}',
-        {
-          maxZoom: 16,
-          attribution: 'Esri &copy; OpenStreetMap',
-        }
-      ).addTo(map);
+      const config = TILE_CONFIGS[mapTheme];
 
-      // Reference labels: Crisp modern labels
-      L.tileLayer(
-        'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}',
-        {
-          maxZoom: 16,
-        }
-      ).addTo(map);
+      const baseLayer = L.tileLayer(config.base, {
+        maxZoom: config.maxZoom,
+        attribution: 'Esri &copy; OpenStreetMap',
+      }).addTo(map);
+
+      baseTileLayerRef.current = baseLayer;
+
+      if (config.reference) {
+        refTileLayerRef.current = L.tileLayer(config.reference, {
+          maxZoom: config.maxZoom,
+        }).addTo(map);
+      }
 
       const markersGroup = L.layerGroup().addTo(map);
       const hubsGroup = L.layerGroup().addTo(map);
@@ -92,18 +113,18 @@ export default function IndiaGlobeMap({
       // Render Hub boundary circles
       EDUCATION_HUBS.forEach((hub) => {
         const circle = L.circle(hub.center, {
-          radius: hub.id === 'tamil-nadu' ? 90000 : hub.id === 'mumbai-pune' ? 80000 : 45000,
+          radius: hub.id === 'tamil-nadu' ? 95000 : hub.id === 'mumbai-pune' ? 85000 : 50000,
           color: '#0b53c3',
-          weight: 1.5,
-          opacity: 0.45,
+          weight: 1.75,
+          opacity: 0.6,
           fillColor: '#0b53c3',
-          fillOpacity: 0.05,
-          dashArray: '4, 6',
+          fillOpacity: 0.08,
+          dashArray: '5, 8',
         });
 
         circle.bindTooltip(
           `
-          <div style="font-family: Inter, sans-serif; font-size: 11px; font-weight: 700; color: #0b53c3; padding: 2px 4px;">
+          <div style="font-family: Inter, sans-serif; font-size: 11px; font-weight: 700; color: #0b53c3; padding: 3px 6px;">
             ${hub.name} (${hub.count.toLocaleString()} institutions)
           </div>
         `,
@@ -119,13 +140,50 @@ export default function IndiaGlobeMap({
       if (mapInstanceRef.current) {
         mapInstanceRef.current.remove();
         mapInstanceRef.current = null;
+        baseTileLayerRef.current = null;
+        refTileLayerRef.current = null;
       }
     };
-  }, [mapMode]);
+  }, [mapTheme]);
 
-  // Update Markers when colleges list or selected college changes (2D)
+  // ==========================================
+  // 2. Smooth Tile Swap when 2D theme changes
+  // ==========================================
   useEffect(() => {
-    if (mapMode !== '2d') return;
+    if (mapTheme === '3d') return;
+    const map = mapInstanceRef.current;
+    if (!map) return;
+
+    import('leaflet').then((L) => {
+      const config = TILE_CONFIGS[mapTheme];
+      if (!config) return;
+
+      if (baseTileLayerRef.current) {
+        map.removeLayer(baseTileLayerRef.current);
+      }
+      if (refTileLayerRef.current) {
+        map.removeLayer(refTileLayerRef.current);
+        refTileLayerRef.current = null;
+      }
+
+      baseTileLayerRef.current = L.tileLayer(config.base, {
+        maxZoom: config.maxZoom,
+      }).addTo(map);
+
+      // Bring markers and hubs to front
+      if (config.reference) {
+        refTileLayerRef.current = L.tileLayer(config.reference, {
+          maxZoom: config.maxZoom,
+        }).addTo(map);
+      }
+    });
+  }, [mapTheme]);
+
+  // ==========================================
+  // 3. Update Markers (2D)
+  // ==========================================
+  useEffect(() => {
+    if (mapTheme === '3d') return;
     const map = mapInstanceRef.current;
     const markersGroup = markersLayerRef.current;
     if (!map || !markersGroup) return;
@@ -141,22 +199,22 @@ export default function IndiaGlobeMap({
         const isTop50 = college.nirfOverallRank && college.nirfOverallRank <= 50;
 
         const markerHtml = `
-          <div class="relative flex items-center justify-center cursor-pointer transition-transform hover:scale-125 ${
+          <div class="relative flex items-center justify-center cursor-pointer transition-transform duration-200 hover:scale-125 ${
             isSelected ? 'scale-125 z-50' : ''
           }">
             ${
               isTop10
-                ? '<div class="absolute -inset-2 rounded-full bg-[#0b53c3]/20 animate-ping pointer-events-none"></div>'
+                ? '<div class="absolute -inset-2.5 rounded-full bg-[#0b53c3]/30 animate-ping pointer-events-none"></div>'
                 : ''
             }
-            <div class="relative flex items-center justify-center rounded-xl shadow-md border-2 border-white text-white font-bold transition-all ${
+            <div class="relative flex items-center justify-center rounded-xl shadow-lg border-2 border-white text-white font-bold transition-all ${
               isSelected
-                ? 'w-7 h-7 bg-[#0b53c3] ring-4 ring-[#0b53c3]/30 z-50 text-[11px]'
+                ? 'w-8 h-8 bg-[#0b53c3] ring-4 ring-[#0b53c3]/40 z-50 text-[11px]'
                 : isTop10
                 ? 'w-6 h-6 bg-[#0b53c3] text-[10px]'
                 : isTop50
                 ? 'w-5 h-5 bg-[#1d4ed8] text-[9px]'
-                : 'w-4 h-4 bg-[#2563eb] text-[0px]'
+                : 'w-3.5 h-3.5 bg-[#2563eb] text-[0px]'
             }">
               ${college.nirfOverallRank && college.nirfOverallRank <= 50 ? college.nirfOverallRank : ''}
             </div>
@@ -166,28 +224,35 @@ export default function IndiaGlobeMap({
         const icon = L.divIcon({
           className: 'custom-college-marker',
           html: markerHtml,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14],
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
         });
 
         const marker = L.marker([college.lat, college.lng], { icon });
 
-        // Tooltip
+        // High-end informative tooltip
         const tooltipHtml = `
-          <div style="font-family: Inter, sans-serif; padding: 4px 6px; min-width: 150px;">
-            <div style="font-weight: 700; font-size: 12px; color: #0f172a; line-height: 1.2;">${
-              college.shortName || college.name
-            }</div>
-            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${college.city}, ${college.state}</div>
-            <div style="margin-top: 4px; display: flex; align-items: center; gap: 4px;">
+          <div style="font-family: Inter, sans-serif; padding: 4px 6px; min-width: 160px;">
+            <div style="font-weight: 700; font-size: 12px; color: #0f172a; line-height: 1.25;">
+              ${college.shortName || college.name}
+            </div>
+            <div style="font-size: 11px; color: #64748b; margin-top: 2px;">
+              ${college.city || 'India'}, ${college.state}
+            </div>
+            <div style="margin-top: 5px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap;">
               ${
                 college.nirfOverallRank
-                  ? `<span style="background: #0b53c3; color: white; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 700;">NIRF #${college.nirfOverallRank}</span>`
+                  ? `<span style="background: #0b53c3; color: white; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 700;">NIRF #${college.nirfOverallRank}</span>`
                   : ''
               }
               ${
                 college.naacGrade && college.naacGrade !== 'NA'
-                  ? `<span style="background: #e2e8f0; color: #334155; padding: 1px 6px; border-radius: 4px; font-size: 10px; font-weight: 600;">NAAC ${college.naacGrade}</span>`
+                  ? `<span style="background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 600;">NAAC ${college.naacGrade}</span>`
+                  : ''
+              }
+              ${
+                college.medianPackageLpa
+                  ? `<span style="background: #f8fafc; color: #334155; border: 1px solid #cbd5e1; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-weight: 700;">₹${college.medianPackageLpa}L CTC</span>`
                   : ''
               }
             </div>
@@ -196,7 +261,7 @@ export default function IndiaGlobeMap({
 
         marker.bindTooltip(tooltipHtml, {
           direction: 'top',
-          offset: [0, -10],
+          offset: [0, -12],
           className: 'college-map-tooltip',
           opacity: 0.98,
         });
@@ -208,11 +273,11 @@ export default function IndiaGlobeMap({
         marker.addTo(markersGroup);
       });
     });
-  }, [colleges, selectedCollege, onSelectCollege, mapMode]);
+  }, [colleges, selectedCollege, onSelectCollege, mapTheme]);
 
   // Fly to selected college (2D)
   useEffect(() => {
-    if (mapMode !== '2d') return;
+    if (mapTheme === '3d') return;
     const map = mapInstanceRef.current;
     if (!map || !selectedCollege) return;
 
@@ -221,35 +286,32 @@ export default function IndiaGlobeMap({
         duration: 1.2,
       });
     }
-  }, [selectedCollege, mapMode]);
+  }, [selectedCollege, mapTheme]);
 
   // Fly to active hub (2D)
   useEffect(() => {
-    if (mapMode !== '2d') return;
+    if (mapTheme === '3d') return;
     const map = mapInstanceRef.current;
     if (!map || !activeHub) return;
 
     map.flyTo(activeHub.center, activeHub.zoom, {
       duration: 1.2,
     });
-  }, [activeHub, mapMode]);
+  }, [activeHub, mapTheme]);
 
   // Reset view (2D)
   useEffect(() => {
-    if (mapMode !== '2d') return;
+    if (mapTheme === '3d') return;
     const map = mapInstanceRef.current;
-    if (!map || resetViewTrigger === 0) return;
-
-    map.flyTo([21.8, 79.2], 5.2, {
-      duration: 1.2,
-    });
-  }, [resetViewTrigger, mapMode]);
+    if (!map) return;
+    map.flyTo([21.8, 79.2], 5.2, { duration: 1.2 });
+  }, [resetViewTrigger, mapTheme]);
 
   // ==========================================
-  // 2. Interactive 3D Globe Mode (D3 Canvas Orthographic)
+  // 4. 3D Digital Globe Canvas Viewport
   // ==========================================
   useEffect(() => {
-    if (mapMode !== '3d') return;
+    if (mapTheme !== '3d') return;
     const canvas = canvas3dRef.current;
     if (!canvas) return;
 
@@ -280,10 +342,21 @@ export default function IndiaGlobeMap({
     const render = () => {
       ctx.clearRect(0, 0, width, height);
 
-      // Globe Background Ocean Sphere
+      // Globe Background Sphere (Rich ocean gradient)
+      const ocean = ctx.createRadialGradient(
+        width / 2 - radius * 0.2,
+        height / 2 - radius * 0.2,
+        radius * 0.1,
+        width / 2,
+        height / 2,
+        radius
+      );
+      ocean.addColorStop(0, '#f8fafc');
+      ocean.addColorStop(1, '#e2e8f0');
+
       ctx.beginPath();
       ctx.arc(width / 2, height / 2, radius, 0, 2 * Math.PI);
-      ctx.fillStyle = '#f1f5f9';
+      ctx.fillStyle = ocean;
       ctx.fill();
       ctx.lineWidth = 1.5;
       ctx.strokeStyle = '#cbd5e1';
@@ -293,14 +366,14 @@ export default function IndiaGlobeMap({
       const glow = ctx.createRadialGradient(
         width / 2,
         height / 2,
-        radius * 0.85,
+        radius * 0.88,
         width / 2,
         height / 2,
         radius * 1.05
       );
       glow.addColorStop(0, 'rgba(11, 83, 195, 0.0)');
-      glow.addColorStop(0.8, 'rgba(11, 83, 195, 0.08)');
-      glow.addColorStop(1, 'rgba(11, 83, 195, 0.2)');
+      glow.addColorStop(0.85, 'rgba(11, 83, 195, 0.08)');
+      glow.addColorStop(1, 'rgba(11, 83, 195, 0.25)');
       ctx.beginPath();
       ctx.arc(width / 2, height / 2, radius * 1.05, 0, 2 * Math.PI);
       ctx.fillStyle = glow;
@@ -308,7 +381,7 @@ export default function IndiaGlobeMap({
 
       // Graticules
       ctx.beginPath();
-      ctx.strokeStyle = '#e2e8f0';
+      ctx.strokeStyle = '#cbd5e1';
       ctx.lineWidth = 0.75;
       path(graticule);
       ctx.stroke();
@@ -319,7 +392,6 @@ export default function IndiaGlobeMap({
         const coords = projection([c.lng, c.lat]);
         if (!coords) return;
 
-        // Check if visible on front hemisphere
         const rot = projection.rotate();
         const dist = d3.geoDistance([c.lng, c.lat], [-rot[0], -rot[1]]);
         if (dist > Math.PI / 2) return;
@@ -335,7 +407,6 @@ export default function IndiaGlobeMap({
         ctx.strokeStyle = '#ffffff';
         ctx.stroke();
 
-        // Pulsing outer ring on top colleges
         if (isTop) {
           ctx.beginPath();
           ctx.arc(coords[0], coords[1], 10, 0, 2 * Math.PI);
@@ -348,14 +419,12 @@ export default function IndiaGlobeMap({
 
     render();
 
-    // Drag to rotate handlers
     const onMouseDown = (e: MouseEvent) => {
       isDragging = true;
       startPos = [e.clientX, e.clientY];
       const r = projection.rotate();
       startRotation = [r[0], r[1]];
     };
-
 
     const onMouseMove = (e: MouseEvent) => {
       if (!isDragging) return;
@@ -396,15 +465,15 @@ export default function IndiaGlobeMap({
       window.removeEventListener('resize', onResize);
       canvas.removeEventListener('mousedown', onMouseDown);
     };
-  }, [mapMode, colleges, selectedCollege]);
+  }, [mapTheme, colleges, selectedCollege]);
 
   return (
-    <div className="absolute inset-0 w-full h-full z-0 overflow-hidden select-none bg-[#f8fafc]">
+    <div className="absolute inset-0 w-full h-full z-0 overflow-hidden select-none bg-[#f1f5f9]">
       {/* 2D Viewport */}
-      {mapMode === '2d' && <div ref={mapContainerRef} className="w-full h-full" />}
+      {mapTheme !== '3d' && <div ref={mapContainerRef} className="w-full h-full" />}
 
       {/* 3D Globe Viewport */}
-      {mapMode === '3d' && (
+      {mapTheme === '3d' && (
         <div className="relative w-full h-full flex items-center justify-center">
           <canvas ref={canvas3dRef} className="cursor-grab active:cursor-grabbing" />
           <div className="absolute bottom-6 left-1/2 -translate-x-1/2 text-xs font-semibold text-slate-500 bg-white/90 backdrop-blur-md px-3 py-1.5 rounded-full border border-slate-200 shadow-sm">
@@ -413,37 +482,68 @@ export default function IndiaGlobeMap({
         </div>
       )}
 
-      {/* View Mode Toggle: 2D Canvas vs 3D Globe */}
-      <div className="absolute top-4 right-[320px] z-10 hidden sm:flex items-center gap-1 bg-white/95 backdrop-blur-xl p-1 rounded-2xl border border-slate-200/90 shadow-md">
+      {/* High-Tech Map Style Switcher (Streets, Satellite, Topo, 3D) */}
+      <div className="absolute top-4 right-4 sm:right-52 z-10 flex items-center gap-1 bg-white/95 backdrop-blur-xl p-1 rounded-2xl border border-slate-200/90 shadow-md">
         <button
           type="button"
-          onClick={() => setMapMode('2d')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-            mapMode === '2d'
+          onClick={() => setMapTheme('streets')}
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            mapTheme === 'streets'
               ? 'bg-[#0b53c3] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
+          title="Vibrant GIS Street Map"
         >
           <Map className="w-3.5 h-3.5" />
-          <span>2D Map</span>
+          <span className="hidden sm:inline">Streets</span>
         </button>
+
         <button
           type="button"
-          onClick={() => setMapMode('3d')}
-          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
-            mapMode === '3d'
+          onClick={() => setMapTheme('satellite')}
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            mapTheme === 'satellite'
               ? 'bg-[#0b53c3] text-white shadow-xs'
               : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
           }`}
+          title="Photorealistic Satellite Aerial"
+        >
+          <Eye className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Satellite</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMapTheme('topo')}
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            mapTheme === 'topo'
+              ? 'bg-[#0b53c3] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+          title="Topographic Terrain"
+        >
+          <Layers className="w-3.5 h-3.5" />
+          <span className="hidden sm:inline">Topo</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setMapTheme('3d')}
+          className={`flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-xl text-xs font-bold transition-all ${
+            mapTheme === '3d'
+              ? 'bg-[#0b53c3] text-white shadow-xs'
+              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
+          }`}
+          title="3D Interactive Digital Earth"
         >
           <Globe className="w-3.5 h-3.5" />
-          <span>3D Globe</span>
+          <span className="hidden sm:inline">3D Globe</span>
         </button>
       </div>
 
       {/* Modern Zoom Controls (for 2D) */}
-      {mapMode === '2d' && (
-        <div className="absolute bottom-6 left-[360px] z-10 hidden sm:flex flex-col gap-1 bg-white/95 backdrop-blur-xl p-1 rounded-2xl border border-slate-200/90 shadow-md">
+      {mapTheme !== '3d' && (
+        <div className="absolute bottom-6 left-4 lg:left-[360px] z-10 hidden sm:flex flex-col gap-1 bg-white/95 backdrop-blur-xl p-1 rounded-2xl border border-slate-200/90 shadow-md">
           <button
             type="button"
             onClick={() => mapInstanceRef.current?.zoomIn()}
@@ -473,7 +573,7 @@ export default function IndiaGlobeMap({
           background: white !important;
           border: 1px solid #e2e8f0 !important;
           border-radius: 14px !important;
-          box-shadow: 0 8px 30px -4px rgba(0, 0, 0, 0.12) !important;
+          box-shadow: 0 10px 35px -5px rgba(0, 0, 0, 0.15) !important;
           padding: 4px 6px !important;
         }
         .college-map-tooltip::before {

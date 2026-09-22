@@ -41,7 +41,7 @@ export default function InstitutionInspectorModal({
   if (!college) return null;
 
   return (
-    <div className="fixed top-3 right-3 bottom-3 w-[560px] max-w-[calc(100vw-360px)] z-30 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-2xl flex flex-col overflow-hidden animate-fade-up select-none">
+    <div className="fixed top-2 sm:top-3 right-2 sm:right-3 bottom-2 sm:bottom-3 left-2 sm:left-auto w-auto sm:w-[560px] max-w-[96vw] sm:max-w-[560px] z-30 bg-white/95 backdrop-blur-2xl rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-2xl flex flex-col overflow-hidden animate-fade-up select-none">
       {/* Top Bar with Close */}
       <div className="px-5 py-3.5 border-b border-slate-100 flex items-center justify-between bg-slate-50/70">
         <div className="flex items-center gap-2">

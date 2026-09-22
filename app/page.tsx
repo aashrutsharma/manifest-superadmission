@@ -32,6 +32,7 @@ import {
   GraduationCap,
   Briefcase,
   IndianRupee,
+  Loader2,
 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 
@@ -51,9 +52,12 @@ const IndiaGlobeMap = dynamic(() => import('@/components/IndiaGlobeMap'), {
 
 export default function ManifestDashboard() {
   // Live Database Dataset State
+  const [baseColleges, setBaseColleges] = useState<College[]>(COLLEGES_DATA);
   const [collegesList, setCollegesList] = useState<College[]>(COLLEGES_DATA);
   const [totalDatabaseCount, setTotalDatabaseCount] = useState<number>(70623);
   const [isFetchingLive, setIsFetchingLive] = useState<boolean>(false);
+  const [isSearchingLive, setIsSearchingLive] = useState<boolean>(false);
+  const [isMobileFilterOpen, setIsMobileFilterOpen] = useState<boolean>(false);
 
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -99,7 +103,9 @@ export default function ManifestDashboard() {
           // Merge live database records with local enriched records (avoid duplicates)
           const liveIds = new Set(data.colleges.map((c: College) => c.id));
           const enrichedOnly = COLLEGES_DATA.filter((c) => !liveIds.has(c.id));
-          setCollegesList([...enrichedOnly, ...data.colleges]);
+          const combined = [...enrichedOnly, ...data.colleges];
+          setBaseColleges(combined);
+          setCollegesList(combined);
           if (data.totalCount) setTotalDatabaseCount(data.totalCount);
         }
       } catch {
@@ -113,6 +119,52 @@ export default function ManifestDashboard() {
       isMounted = false;
     };
   }, []);
+
+  // Live debounced search across all 70,623 institutions
+  useEffect(() => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed) {
+      setCollegesList(baseColleges);
+      setIsSearchingLive(false);
+      return;
+    }
+
+    if (trimmed.length < 2) return;
+
+    let isSubscribed = true;
+    setIsSearchingLive(true);
+
+    const timer = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/colleges?q=${encodeURIComponent(trimmed)}&pageSize=60`);
+        if (!res.ok) throw new Error('Search failed');
+        const data = await res.json();
+        if (isSubscribed && data.colleges) {
+          const fetchedIds = new Set(data.colleges.map((c: College) => c.id));
+          const localMatches = COLLEGES_DATA.filter(
+            (c) =>
+              !fetchedIds.has(c.id) &&
+              (c.name.toLowerCase().includes(trimmed.toLowerCase()) ||
+                (c.shortName && c.shortName.toLowerCase().includes(trimmed.toLowerCase())) ||
+                c.city.toLowerCase().includes(trimmed.toLowerCase()))
+          );
+          setCollegesList([...data.colleges, ...localMatches]);
+          if (typeof data.totalCount === 'number') {
+            setTotalDatabaseCount(data.totalCount);
+          }
+        }
+      } catch {
+        // keep current list
+      } finally {
+        if (isSubscribed) setIsSearchingLive(false);
+      }
+    }, 280);
+
+    return () => {
+      isSubscribed = false;
+      clearTimeout(timer);
+    };
+  }, [searchQuery, baseColleges]);
 
   // Filtered dataset
   const filteredColleges = useMemo(() => {
@@ -231,6 +283,20 @@ export default function ManifestDashboard() {
     return counts;
   }, [collegesList]);
 
+  // Active filter count for mobile badge
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (selectedNirfTier !== 'All') count++;
+    if (selectedExam !== 'All') count++;
+    if (selectedBudget !== 'All') count++;
+    if (selectedCtc !== 'All') count++;
+    if (selectedType !== 'All') count++;
+    if (selectedNaac !== 'All') count++;
+    if (selectedStream !== 'All') count++;
+    if (searchQuery.trim()) count++;
+    return count;
+  }, [selectedNirfTier, selectedExam, selectedBudget, selectedCtc, selectedType, selectedNaac, selectedStream, searchQuery]);
+
   // Compare handlers
   const handleToggleCompare = useCallback((college: College) => {
     setComparedColleges((prev) => {
@@ -333,27 +399,50 @@ export default function ManifestDashboard() {
         onClearAll={handleClearCompare}
       />
 
+      {/* Mobile Drawer Backdrop */}
+      {isMobileFilterOpen && (
+        <div
+          className="lg:hidden fixed inset-0 z-30 bg-slate-900/40 backdrop-blur-xs animate-in fade-in-0 duration-200"
+          onClick={() => setIsMobileFilterOpen(false)}
+        />
+      )}
+
+      {/* Floating Filter Button on Mobile */}
+      <button
+        type="button"
+        onClick={() => setIsMobileFilterOpen(true)}
+        className="lg:hidden fixed top-3.5 left-3.5 z-20 flex items-center gap-1.5 px-3 py-2 bg-white/95 backdrop-blur-xl rounded-full border border-slate-200/90 shadow-md text-xs font-bold text-slate-800 active:scale-95 transition-all"
+      >
+        <Search className="w-3.5 h-3.5 text-[#0b53c3]" />
+        <span>Filters</span>
+        {activeFiltersCount > 0 && (
+          <span className="w-4 h-4 rounded-full bg-[#0b53c3] text-white text-[10px] flex items-center justify-center font-bold">
+            {activeFiltersCount}
+          </span>
+        )}
+      </button>
+
       {/* 2. Top Action Bar */}
-      <header className="fixed top-3.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-2 bg-transparent pointer-events-auto">
+      <header className="fixed top-3.5 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 sm:gap-2 bg-transparent pointer-events-auto max-w-[calc(100vw-24px)]">
         {/* Prominent Database Button in Primary #0b53c3 */}
         <button
           type="button"
           onClick={() => setIsDatabaseOpen(true)}
-          className="flex items-center gap-2.5 px-5 py-2.5 bg-[#0b53c3] hover:bg-[#09429e] text-white rounded-full shadow-lg font-bold text-xs tracking-tight transition-all hover:scale-105 active:scale-95 border border-blue-400/30"
+          className="flex items-center gap-1.5 sm:gap-2.5 px-3.5 sm:px-5 py-2 sm:py-2.5 bg-[#0b53c3] hover:bg-[#09429e] text-white rounded-full shadow-lg font-bold text-xs tracking-tight transition-all hover:scale-105 active:scale-95 border border-blue-400/30"
         >
-          <Database className="w-4 h-4 text-white" />
-          <span className="text-[13px]">Database</span>
-          <span className="text-[11px] bg-white/25 px-2 py-0.5 rounded-full font-mono font-bold">
+          <Database className="w-3.5 h-3.5 sm:w-4 sm:h-4 text-white" />
+          <span className="text-xs sm:text-[13px]">Database</span>
+          <span className="text-[10px] sm:text-[11px] bg-white/25 px-1.5 sm:px-2 py-0.5 rounded-full font-mono font-bold">
             {totalDatabaseCount.toLocaleString()}
           </span>
         </button>
 
-        {/* Dynamic Compare Action Pill (if 2+ colleges added) */}
+        {/* Dynamic Compare Action Pill (if 1+ colleges added) */}
         {comparedColleges.length > 0 && (
           <button
             type="button"
             onClick={() => setIsCompareModalOpen(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-full shadow-md font-bold text-xs transition-all"
+            className="flex items-center gap-1 px-3 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-full shadow-md font-bold text-xs transition-all"
           >
             <Layers className="w-3.5 h-3.5 text-blue-400" />
             <span>Compare ({comparedColleges.length})</span>
@@ -365,9 +454,9 @@ export default function ManifestDashboard() {
           type="button"
           onClick={() => setIsArchitectureOpen(true)}
           aria-label="What is Manifest"
-          className="w-9 h-9 rounded-full bg-white/95 backdrop-blur-xl border border-slate-200/90 text-slate-700 hover:text-[#0b53c3] hover:border-[#0b53c3]/40 shadow-sm flex items-center justify-center text-xs font-bold transition-colors"
+          className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/95 backdrop-blur-xl border border-slate-200/90 text-slate-700 hover:text-[#0b53c3] hover:border-[#0b53c3]/40 shadow-sm flex items-center justify-center text-xs font-bold transition-colors shrink-0"
         >
-          <HelpCircle className="w-4 h-4" />
+          <HelpCircle className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
         </button>
 
         {/* Reset Camera to Full India */}
@@ -375,33 +464,51 @@ export default function ManifestDashboard() {
           type="button"
           onClick={handleResetFilters}
           aria-label="Reset Map to Full India"
-          className="w-9 h-9 rounded-full bg-white/95 backdrop-blur-xl border border-slate-200/90 text-slate-700 hover:text-slate-900 shadow-sm flex items-center justify-center transition-colors"
+          className="w-8 h-8 sm:w-9 sm:h-9 rounded-full bg-white/95 backdrop-blur-xl border border-slate-200/90 text-slate-700 hover:text-slate-900 shadow-sm flex items-center justify-center transition-colors shrink-0"
           title="Reset View"
         >
-          <Compass className="w-4 h-4" />
+          <Compass className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
         </button>
       </header>
 
       {/* 3. Floating Left Sidebar (Clean Console Logo Header, Rich Student Filters) */}
-      <aside className="fixed top-3 left-3 bottom-3 w-[335px] z-20 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-2xl flex flex-col overflow-hidden pointer-events-auto">
+      <aside
+        className={`fixed top-3 left-3 bottom-3 w-[335px] max-w-[calc(100vw-24px)] z-35 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-2xl flex flex-col overflow-hidden pointer-events-auto transition-transform duration-300 ease-in-out ${
+          isMobileFilterOpen ? 'translate-x-0' : '-translate-x-[120%] lg:translate-x-0'
+        }`}
+      >
         {/* Top Header with Console Logo */}
-        <div className="p-5 pb-4 border-b border-slate-100">
-          <div className="flex items-center justify-center py-1">
-            <ConsoleLogo size="lg" className="justify-center" />
+        <div className="p-4 sm:p-5 pb-3 sm:pb-4 border-b border-slate-100">
+          <div className="flex items-center justify-between py-1">
+            <div className="flex-1 flex justify-center">
+              <ConsoleLogo size="xl" className="justify-center" />
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsMobileFilterOpen(false)}
+              className="lg:hidden p-1.5 rounded-xl text-slate-400 hover:text-slate-700 hover:bg-slate-100"
+              aria-label="Close Filters"
+            >
+              <X className="w-4 h-4" />
+            </button>
           </div>
 
-          <p className="text-xs text-slate-500 font-medium text-center mt-2 leading-relaxed">
-            Registry of <span className="font-bold text-slate-800">{totalDatabaseCount.toLocaleString()}</span> degree-granting higher education institutions.
+          <p className="text-xs text-slate-500 font-semibold text-center mt-2 leading-relaxed">
+            Registry of <span className="font-extrabold text-slate-800">{totalDatabaseCount.toLocaleString()}</span> degree-granting higher education institutions.
           </p>
 
-          {/* Search Input */}
+          {/* Search Input with Live Spinner */}
           <div className="relative mt-3.5">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            {isSearchingLive ? (
+              <Loader2 className="w-4 h-4 text-[#0b53c3] absolute left-3 top-1/2 -translate-y-1/2 animate-spin" />
+            ) : (
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            )}
             <Input
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search 70,000+ colleges, cities, AISHE..."
-              className="pl-9 pr-8 h-9 text-xs bg-slate-50/90 border-slate-200 rounded-xl font-medium focus-visible:ring-[#0b53c3]"
+              placeholder={isSearchingLive ? 'Searching 70,623 live colleges...' : 'Search 70k+ colleges, cities, AISHE...'}
+              className="pl-9 pr-8 h-9 text-xs bg-slate-50/90 border-slate-200 rounded-xl font-semibold focus-visible:ring-[#0b53c3]"
             />
             {searchQuery && (
               <button
@@ -623,7 +730,7 @@ export default function ManifestDashboard() {
       </aside>
 
       {/* 4. Bottom Data Dock (Interactive Pill Card Strip with Logos) */}
-      <section className="fixed bottom-3.5 left-[355px] right-[355px] max-w-4xl mx-auto z-20 pointer-events-auto bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden transition-all">
+      <section className="fixed bottom-2.5 sm:bottom-3.5 left-2 sm:left-4 lg:left-[350px] right-2 sm:right-4 xl:right-[330px] z-20 pointer-events-auto bg-white/95 backdrop-blur-2xl rounded-2xl sm:rounded-3xl border border-slate-200/90 shadow-2xl overflow-hidden transition-all">
         {/* Dock Header */}
         <div className="px-4 py-2.5 border-b border-slate-100 flex items-center justify-between gap-3 bg-slate-50/70">
           <div className="flex items-center gap-2.5">
@@ -678,7 +785,7 @@ export default function ManifestDashboard() {
 
         {/* Chips Wrap Grid with Crisp Logos */}
         {isDockExpanded && (
-          <div className="p-3.5 max-h-[155px] overflow-y-auto">
+          <div className="p-3 sm:p-3.5 max-h-[125px] sm:max-h-[155px] overflow-y-auto">
             {dockViewMode === 'colleges' ? (
               <div className="flex flex-wrap gap-2">
                 {filteredColleges.slice(0, 28).map((college) => {
@@ -753,8 +860,8 @@ export default function ManifestDashboard() {
         )}
       </section>
 
-      {/* 5. Floating Right Widgets Stack */}
-      <aside className="fixed top-3.5 right-3.5 bottom-3.5 w-[310px] z-20 flex flex-col gap-2.5 pointer-events-auto overflow-y-auto">
+      {/* 5. Floating Right Widgets Stack (Desktop only) */}
+      <aside className="hidden xl:flex fixed top-3.5 right-3.5 bottom-3.5 w-[310px] z-20 flex-col gap-2.5 pointer-events-auto overflow-y-auto">
         {/* Widget 1: Leading Institutions */}
         <div className="p-4 bg-white/95 backdrop-blur-2xl rounded-3xl border border-slate-200/90 shadow-xl">
           <div className="flex items-center justify-between text-xs font-bold text-slate-900 mb-3">

@@ -22,7 +22,7 @@ export default function ComparisonFloatingBar({
   if (comparedColleges.length === 0) return null;
 
   return (
-    <div className="fixed top-16 left-1/2 -translate-x-1/2 z-30 bg-slate-900/95 text-white backdrop-blur-xl px-4 py-2 rounded-full border border-slate-700/80 shadow-2xl flex items-center gap-3 animate-fade-up select-none">
+    <div className="fixed top-16 left-1/2 -translate-x-1/2 z-30 bg-slate-900/95 text-white backdrop-blur-xl px-3 sm:px-4 py-1.5 sm:py-2 rounded-full border border-slate-700/80 shadow-2xl flex items-center gap-2 sm:gap-3 animate-fade-up select-none max-w-[calc(100vw-24px)] overflow-x-auto">
       <div className="flex items-center gap-2">
         <div className="w-6 h-6 rounded-full bg-[#0b53c3] flex items-center justify-center text-white text-xs font-bold shadow-xs">
           <Layers className="w-3.5 h-3.5" />
@@ -84,3 +84,4 @@ export default function ComparisonFloatingBar({
     </div>
   );
 }
+
