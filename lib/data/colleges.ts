@@ -1,6 +1,7 @@
 import { College } from '../types';
+import { getCollegeCoordinates, inferEducationHub } from '../geo';
 
-export const COLLEGES_DATA: College[] = [
+const RAW_COLLEGES_DATA: College[] = [
   {
     id: 'iit-madras',
     slug: 'iit-madras-chennai',
@@ -907,4 +908,44 @@ export const COLLEGES_DATA: College[] = [
     ]
   }
 ];
+
+const AISHE_LOOKUP: Record<string, string> = {
+  'iit-madras': 'U-0456',
+  'iisc-bangalore': 'U-0220',
+  'iit-bombay': 'U-0306',
+  'iit-delhi': 'U-0100',
+  'aiims-new-delhi': 'U-0099',
+  'iim-ahmedabad': 'U-0142',
+  'iit-kanpur': 'U-0516',
+  'iit-kharagpur': 'U-0573',
+  'iit-roorkee': 'U-0560',
+  'iit-guwahati': 'U-0053',
+  'iit-hyderabad': 'U-0013',
+  'jnu-new-delhi': 'U-0109',
+  'dtu-delhi': 'U-0098',
+  'nit-trichy': 'U-0473',
+  'bits-pilani': 'U-0391',
+  'vit-vellore': 'U-0490',
+  'nlsiu-bengaluru': 'U-0237',
+  'srcc-delhi': 'C-6401',
+  'symbiosis-pune': 'U-0330',
+  'nid-ahmedabad': 'U-0145',
+  'thapar-patiala': 'U-0387',
+  'manipal-mahe': 'U-0230',
+  'amity-noida': 'U-0504',
+};
+
+export const COLLEGES_DATA: College[] = RAW_COLLEGES_DATA.map((c, idx) => {
+  const [lat, lng] = getCollegeCoordinates(c);
+  const hub = inferEducationHub(c);
+  const aisheCode = c.aisheCode || AISHE_LOOKUP[c.id] || (c.code ? `U-${c.code.toUpperCase()}` : `U-${String(100 + idx).padStart(4, '0')}`);
+  return {
+    ...c,
+    lat: c.lat || lat,
+    lng: c.lng || lng,
+    hub: c.hub || hub,
+    aisheCode,
+  };
+});
+
 

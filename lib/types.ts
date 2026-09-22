@@ -64,6 +64,10 @@ export interface College {
   pincode?: string;
   address: string;
   campusAreaAcres: number;
+  lat?: number;
+  lng?: number;
+  hub?: string;
+  aisheCode?: string;
   
   // Accreditations & Rankings
   naacGrade: NaacGrade | string;
