@@ -7,7 +7,12 @@ export const metadata: Metadata = {
   title: 'Manifest — Registry of Higher Education Institutions in India',
   description: 'The open registry of 70,000+ degree-granting universities and colleges across India. AISHE keyed, NIRF ranked.',
   icons: {
-    icon: '/console-logo.png',
+    icon: [
+      { url: '/favicon-light.png', media: '(prefers-color-scheme: light)' },
+      { url: '/favicon-dark.png', media: '(prefers-color-scheme: dark)' },
+      { url: '/favicon.ico' },
+    ],
+    apple: '/apple-touch-icon.png',
   },
 };
 
@@ -15,7 +20,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <head>
-        <link rel="icon" href="/console-logo.png" />
+        <link rel="icon" href="/favicon-light.png" media="(prefers-color-scheme: light)" />
+        <link rel="icon" href="/favicon-dark.png" media="(prefers-color-scheme: dark)" />
+        <link rel="icon" href="/favicon.ico" sizes="any" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
         <link
